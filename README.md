@@ -10,8 +10,8 @@ JavaScript generates every texture, sprite, and sound when the page loads.
 Controls: arrows move and turn, Ctrl fires, Space opens doors, Shift runs,
 Alt+arrows or `,` and `.` strafe.
 
-Cheat code: type `runbabyrun` to watch a recorded run from the start to the
-exit switch.
+Cheat code: type `runbabyrun` to watch a recorded run that kills every
+monster, collects every item, and uses the exit switch.
 
 Not affiliated with id Software. DOOM is a trademark of id Software.
 Code license: GPL-2.0.
