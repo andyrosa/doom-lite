@@ -3,6 +3,8 @@
 A single-page first-person shooter in the style of Doom's first level.
 Open `index.html` in a browser. It needs no other file and no network.
 
+![Game play: the start room, with a zombie beside the door](screenshot.png)
+
 JavaScript generates every texture, sprite, and sound when the page loads.
 
 Controls: arrows move and turn, Ctrl fires, Space opens doors, Shift runs,
