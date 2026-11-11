@@ -1,0 +1,3440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Doom-lite</title>
+<style>
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+body { display: flex; align-items: center; justify-content: center; }
+canvas { width: min(100vw, 133.333vh); height: min(75vw, 100vh); image-rendering: pixelated; cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="screen" width="320" height="200"></canvas>
+<script>
+(function () {
+    'use strict';
+
+    // ---------------------------------------------------------------- constants
+
+    const SCREEN_WIDTH = 320;
+    const SCREEN_HEIGHT = 200;
+    const STATUS_BAR_HEIGHT = 32;
+    const VIEW_HEIGHT = SCREEN_HEIGHT - STATUS_BAR_HEIGHT;
+    const VIEW_CENTER_ROW = VIEW_HEIGHT / 2;
+    const HALF_SCREEN_WIDTH = SCREEN_WIDTH / 2;
+    const PROJECTION_DISTANCE = SCREEN_WIDTH / 2;
+    const TICS_PER_SECOND = 35;
+    const TIC_MILLISECONDS = 1000 / TICS_PER_SECOND;
+    const MAX_TICS_PER_FRAME = 4;
+    const TWO_PI = Math.PI * 2;
+
+    const PALETTE_SIZE = 256;
+    const TRANSPARENT_INDEX = 0;
+    const SHADE_LEVEL_COUNT = 32;
+    const LIGHT_NUMBER_COUNT = 16;
+    const LIGHT_DISTANCE_FACTOR = 1280;
+    const MAX_LIGHT_ADJUSTMENT = 23;
+    const ALPHA_OPAQUE_THRESHOLD = 128;
+
+    const FLAT_SIZE = 64;
+    const FLAT_MASK = FLAT_SIZE - 1;
+    const FLAT_SHIFT = 6;
+    const SKY_WIDTH = 256;
+    const SKY_HEIGHT = 128;
+    const SKY_ROW_OFFSET = 16;
+    const SKY_COLUMNS_PER_RADIAN = (SKY_WIDTH * 4) / TWO_PI;
+    const SKY_FLAT = 'sky';
+    const TEXTURE_V_BIAS_REPEATS = 1024;
+
+    const MIN_RAY_PARAM = 0.001;
+    const MAX_HITS = 256;
+    const MIN_SPRITE_DEPTH = 4;
+
+    const PLAYER_RADIUS = 16;
+    const PLAYER_HEIGHT = 56;
+    const PLAYER_VIEW_HEIGHT = 41;
+    const DEAD_VIEW_HEIGHT = 6;
+    const MAX_STEP_HEIGHT = 24;
+    const CEILING_VIEW_MARGIN = 4;
+    const FRICTION = 0.90625;
+    const STOP_SPEED = 0.0625;
+    const THRUST_DIVISOR = 32;
+    const WALK_FORWARD_MOVE = 25;
+    const RUN_FORWARD_MOVE = 50;
+    const WALK_SIDE_MOVE = 24;
+    const RUN_SIDE_MOVE = 40;
+    const SLOW_TURN_TICS = 6;
+    const SLOW_TURN_RADIANS = (320 / 65536) * TWO_PI;
+    const WALK_TURN_RADIANS = (640 / 65536) * TWO_PI;
+    const RUN_TURN_RADIANS = (1280 / 65536) * TWO_PI;
+    const GRAVITY = 1;
+    const MAX_BOB = 16;
+    const VIEW_BOB_PERIOD_TICS = 20;
+    const WEAPON_BOB_PERIOD_TICS = 64;
+    const USE_RANGE = 64;
+    const SHOT_RANGE = 2048;
+    const SHOT_HEIGHT = 32;
+    const PUFF_PULLBACK = 4;
+    const PISTOL_SPREAD_RADIANS = (255 * 262144 / 4294967296) * TWO_PI / 255;
+    const ZOMBIE_SPREAD_RADIANS = (255 * 1048576 / 4294967296) * TWO_PI / 255;
+    const START_HEALTH = 100;
+    const START_AMMO = 50;
+    const MAX_HEALTH = 100;
+    const MAX_AMMO = 200;
+    const MAX_ARMOR = 100;
+    const ARMOR_ABSORB_DIVISOR = 3;
+    const STIMPACK_HEALTH = 10;
+    const CLIP_AMMO = 10;
+    const DROPPED_CLIP_AMMO = 5;
+    const BONUS_FLASH_TICS = 6;
+    const MAX_DAMAGE_FLASH = 100;
+    const MESSAGE_TICS = 140;
+    const NUKAGE_DAMAGE = 5;
+    const NUKAGE_DAMAGE_INTERVAL_MASK = 31;
+    const NUKAGE_FRAME_TICS = 8;
+    const RESTART_DELAY_TICS = 35;
+    const EXIT_DELAY_TICS = 20;
+    const FACE_LOOK_TICS = 18;
+    const FACE_OUCH_TICS = 20;
+    const FACE_BLOOD_LEVELS = 5;
+    const GUN_FLASH_TICS = 7;
+
+    const DOOR_SPEED = 2;
+    const DOOR_WAIT_TICS = 150;
+    const DOOR_HEAD_CLEARANCE = 4;
+    const BIG_DOOR_FRAME_HEIGHT = 128;
+    const DOOR_FRAME_HEIGHT = 72;
+
+    const MONSTER_RADIUS = 20;
+    const MONSTER_HEIGHT = 56;
+    const MONSTER_EYE_HEIGHT = 42;
+    const MONSTER_SPEED = 8;
+    const MONSTER_REACTION_STEPS = 8;
+    const MELEE_RANGE = 64;
+    const IDLE_LOOK_TICS = 10;
+    const PAIN_TICS = 6;
+    const DEATH_FRAME_TICS = 5;
+    const DIAGONAL = 0.7071;
+    const DIRECTION_VECTORS = [[1, 0], [DIAGONAL, DIAGONAL], [0, 1], [-DIAGONAL, DIAGONAL], [-1, 0], [-DIAGONAL, -DIAGONAL], [0, -1], [DIAGONAL, -DIAGONAL]];
+    const NO_DIRECTION = -1;
+    const DIRECTION_EAST = 0;
+    const DIRECTION_NORTH = 2;
+    const DIRECTION_WEST = 4;
+    const DIRECTION_SOUTH = 6;
+    const CHASE_AXIS_THRESHOLD = 10;
+    const FIREBALL_SPEED = 10;
+    const FIREBALL_RADIUS = 6;
+    const FIREBALL_HEIGHT = 8;
+    const ITEM_RADIUS = 20;
+
+    const SOUND_SAMPLE_RATE = 11025;
+    const SOUND_CLOSE_DISTANCE = 160;
+    const SOUND_CLIP_DISTANCE = 1200;
+    const SOUND_PEAK = 0.9;
+    const SOUND_PAN_WIDTH = 0.8;
+
+    const FACE_LEFT = 148;
+    const FACE_TOP = 170;
+    const BIG_NUMBER_TOP = 171;
+    const AMMO_RIGHT = 44;
+    const HEALTH_RIGHT = 90;
+    const ARMOR_RIGHT = 221;
+
+    // ---------------------------------------------------------------- helpers
+
+    function clamp(value, low, high) {
+        return value < low ? low : value > high ? high : value;
+    }
+
+    function createRandomGenerator(seed) {
+        let state = seed >>> 0;
+        return function () {
+            state = (state + 0x6D2B79F5) >>> 0;
+            let mixed = state;
+            mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+            mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+            return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    const ASSET_SEED = 1993;
+    const assetRandom = createRandomGenerator(ASSET_SEED);
+
+    function randomByte() {
+        return (Math.random() * 256) | 0;
+    }
+
+    function normalizeAngle(angle) {
+        let result = angle % TWO_PI;
+        if (result > Math.PI) { result -= TWO_PI; }
+        if (result < -Math.PI) { result += TWO_PI; }
+        return result;
+    }
+
+    function createCanvasContext(width, height) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (context === null) { throw new Error('The browser gave no 2D canvas context.'); }
+        return context;
+    }
+
+    function fillBox(context, color, left, top, width, height) {
+        context.fillStyle = color;
+        context.fillRect(left, top, width, height);
+    }
+
+    function fillShape(context, color, points) {
+        context.fillStyle = color;
+        context.beginPath();
+        context.moveTo(points[0][0], points[0][1]);
+        for (let pointIndex = 1; pointIndex < points.length; pointIndex++) {
+            context.lineTo(points[pointIndex][0], points[pointIndex][1]);
+        }
+        context.closePath();
+        context.fill();
+    }
+
+    function fillOval(context, color, centerX, centerY, radiusX, radiusY) {
+        context.fillStyle = color;
+        context.beginPath();
+        context.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, TWO_PI);
+        context.fill();
+    }
+
+    function strokeLine(context, color, lineWidth, fromX, fromY, toX, toY) {
+        context.strokeStyle = color;
+        context.lineWidth = lineWidth;
+        context.lineCap = 'round';
+        context.beginPath();
+        context.moveTo(fromX, fromY);
+        context.lineTo(toX, toY);
+        context.stroke();
+    }
+
+    // ---------------------------------------------------------------- palette
+
+    // Each ramp is [entry count, first color, last color]. The ramps follow the color families of Doom's palette in
+    // the same order, so that a color index means the same family as in Doom. Index 0 marks a transparent pixel.
+    const PALETTE_RAMPS = [
+        [1, [0, 0, 0], [0, 0, 0]],
+        [1, [31, 23, 11], [31, 23, 11]],
+        [1, [23, 15, 7], [23, 15, 7]],
+        [1, [75, 75, 75], [75, 75, 75]],
+        [1, [255, 255, 255], [255, 255, 255]],
+        [4, [27, 27, 27], [7, 7, 7]],
+        [4, [47, 55, 31], [15, 23, 0]],
+        [3, [79, 59, 43], [63, 43, 27]],
+        [32, [255, 183, 183], [67, 0, 0]],
+        [8, [255, 235, 223], [255, 187, 147]],
+        [8, [255, 179, 131], [203, 127, 79]],
+        [16, [191, 123, 75], [43, 35, 15]],
+        [32, [239, 239, 239], [35, 35, 35]],
+        [16, [119, 255, 111], [11, 23, 7]],
+        [16, [191, 167, 143], [83, 63, 47]],
+        [8, [159, 131, 99], [67, 51, 27]],
+        [8, [123, 127, 99], [55, 63, 39]],
+        [8, [255, 255, 115], [115, 43, 0]],
+        [8, [255, 255, 255], [255, 31, 31]],
+        [16, [255, 0, 0], [67, 0, 0]],
+        [8, [231, 231, 255], [27, 27, 255]],
+        [8, [0, 0, 255], [0, 0, 83]],
+        [8, [255, 255, 255], [255, 127, 27]],
+        [8, [243, 115, 23], [175, 67, 0]],
+        [8, [255, 255, 255], [255, 255, 0]],
+        [4, [167, 63, 0], [135, 35, 0]],
+        [4, [79, 59, 39], [47, 27, 11]],
+        [8, [0, 0, 83], [0, 0, 0]],
+        [1, [255, 159, 67], [255, 159, 67]],
+        [1, [255, 231, 75], [255, 231, 75]],
+        [1, [255, 123, 255], [255, 123, 255]],
+        [1, [255, 0, 255], [255, 0, 255]],
+        [1, [207, 0, 207], [207, 0, 207]],
+        [1, [159, 0, 155], [159, 0, 155]],
+        [1, [111, 0, 107], [111, 0, 107]],
+        [1, [167, 107, 107], [167, 107, 107]]
+    ];
+    const FIRST_OPAQUE_INDEX = 1;
+
+    const paletteRed = new Uint8Array(PALETTE_SIZE);
+    const paletteGreen = new Uint8Array(PALETTE_SIZE);
+    const paletteBlue = new Uint8Array(PALETTE_SIZE);
+    const shadedColors = new Uint32Array(SHADE_LEVEL_COUNT * PALETTE_SIZE);
+    const nearestColorCache = new Map();
+
+    function nearestPaletteIndex(red, green, blue) {
+        const key = (red << 16) | (green << 8) | blue;
+        const cached = nearestColorCache.get(key);
+        if (cached !== undefined) { return cached; }
+        let bestIndex = FIRST_OPAQUE_INDEX;
+        let bestDistance = Infinity;
+        for (let paletteIndex = FIRST_OPAQUE_INDEX; paletteIndex < PALETTE_SIZE; paletteIndex++) {
+            const redDifference = paletteRed[paletteIndex] - red;
+            const greenDifference = paletteGreen[paletteIndex] - green;
+            const blueDifference = paletteBlue[paletteIndex] - blue;
+            const distance = redDifference * redDifference + greenDifference * greenDifference + blueDifference * blueDifference;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = paletteIndex;
+            }
+        }
+        nearestColorCache.set(key, bestIndex);
+        return bestIndex;
+    }
+
+    function buildPalette() {
+        let paletteIndex = 0;
+        for (const ramp of PALETTE_RAMPS) {
+            const entryCount = ramp[0];
+            for (let entry = 0; entry < entryCount; entry++) {
+                const blend = entryCount === 1 ? 0 : entry / (entryCount - 1);
+                paletteRed[paletteIndex] = Math.round(ramp[1][0] + (ramp[2][0] - ramp[1][0]) * blend);
+                paletteGreen[paletteIndex] = Math.round(ramp[1][1] + (ramp[2][1] - ramp[1][1]) * blend);
+                paletteBlue[paletteIndex] = Math.round(ramp[1][2] + (ramp[2][2] - ramp[1][2]) * blend);
+                paletteIndex++;
+            }
+        }
+        if (paletteIndex !== PALETTE_SIZE) { throw new Error('The palette ramps define ' + paletteIndex + ' colors, expected ' + PALETTE_SIZE + '.'); }
+        for (let level = 0; level < SHADE_LEVEL_COUNT; level++) {
+            const brightness = 1 - level / SHADE_LEVEL_COUNT;
+            for (let colorIndex = 0; colorIndex < PALETTE_SIZE; colorIndex++) {
+                const darkIndex = nearestPaletteIndex(
+                    Math.round(paletteRed[colorIndex] * brightness),
+                    Math.round(paletteGreen[colorIndex] * brightness),
+                    Math.round(paletteBlue[colorIndex] * brightness));
+                shadedColors[level * PALETTE_SIZE + colorIndex] =
+                    (0xFF000000 | (paletteBlue[darkIndex] << 16) | (paletteGreen[darkIndex] << 8) | paletteRed[darkIndex]) >>> 0;
+            }
+        }
+    }
+
+    // Draws with the canvas API, then converts the drawing to palette indexes. Transparent pixels become TRANSPARENT_INDEX.
+    function rasterize(width, height, noiseAmount, paint) {
+        const context = createCanvasContext(width, height);
+        paint(context);
+        const colorData = context.getImageData(0, 0, width, height).data;
+        const pixels = new Uint8Array(width * height);
+        for (let pixelIndex = 0; pixelIndex < pixels.length; pixelIndex++) {
+            if (colorData[pixelIndex * 4 + 3] < ALPHA_OPAQUE_THRESHOLD) {
+                pixels[pixelIndex] = TRANSPARENT_INDEX;
+                continue;
+            }
+            const noise = (assetRandom() - 0.5) * 2 * noiseAmount;
+            pixels[pixelIndex] = nearestPaletteIndex(
+                clamp(Math.round(colorData[pixelIndex * 4] + noise), 0, 255),
+                clamp(Math.round(colorData[pixelIndex * 4 + 1] + noise), 0, 255),
+                clamp(Math.round(colorData[pixelIndex * 4 + 2] + noise), 0, 255));
+        }
+        return { width: width, height: height, pixels: pixels };
+    }
+
+    // ---------------------------------------------------------------- wall textures and flats
+
+    // Each painter imitates the layout and colors of the Doom texture that its comment names.
+
+    function translucent(red, green, blue, opacity) {
+        return 'rgba(' + red + ',' + green + ',' + blue + ',' + opacity + ')';
+    }
+
+    // Adds the vertical grain that Doom's wall textures share: each pixel column gets its own brightness and a darker drip.
+    function paintStreaks(context, left, top, width, height, strength) {
+        for (let column = left; column < left + width; column++) {
+            const shade = (assetRandom() - 0.5) * strength;
+            fillBox(context, shade < 0 ? translucent(0, 0, 0, -shade) : translucent(255, 255, 255, shade), column, top, 1, height);
+            const dripTop = assetRandom() * height;
+            fillBox(context, translucent(0, 0, 0, strength * 0.5), column, top + dripTop, 1, Math.min(height - dripTop, assetRandom() * height * 0.4));
+        }
+    }
+
+    function paintDrips(context, left, top, width, maxLength, color, count) {
+        for (let dripIndex = 0; dripIndex < count; dripIndex++) {
+            fillBox(context, color, left + Math.floor(assetRandom() * width), top, 1, 3 + assetRandom() * maxLength);
+        }
+    }
+
+    function paintMottled(context, width, height, baseColor, blobColors, blobCount) {
+        fillBox(context, baseColor, 0, 0, width, height);
+        for (let blobIndex = 0; blobIndex < blobCount; blobIndex++) {
+            const centerX = assetRandom() * width;
+            const centerY = assetRandom() * height;
+            const radiusX = 2 + assetRandom() * 6;
+            const radiusY = 2 + assetRandom() * 5;
+            const color = blobColors[blobIndex % blobColors.length];
+            for (const shiftX of [-width, 0, width]) {
+                for (const shiftY of [-height, 0, height]) {
+                    fillOval(context, color, centerX + shiftX, centerY + shiftY, radiusX, radiusY);
+                }
+            }
+        }
+    }
+
+    function paintHazard(context, left, top, width, height) {
+        context.save();
+        context.beginPath();
+        context.rect(left, top, width, height);
+        context.clip();
+        fillBox(context, '#1b1b1b', left, top, width, height);
+        for (let stripeLeft = left - height; stripeLeft < left + width; stripeLeft += 8) {
+            fillShape(context, '#d7bb43', [[stripeLeft, top + height], [stripeLeft + 4, top + height], [stripeLeft + 4 + height, top], [stripeLeft + height, top]]);
+        }
+        context.restore();
+    }
+
+    const STARTAN_GREY = { groove: '#3b3b3b', body: '#6f6f6f', light: '#8b8b8b', shine: '#b7b7b7', strip: '#575757', drips: 2 };
+    const STARTAN_TAN = { groove: '#47372b', body: '#7b634f', light: '#8f7763', shine: '#cf8353', strip: '#67533f', drips: 7 };
+
+    // One 32 by 64 panel of STARTAN3: a rounded cap, a tall streaked plate, and a low strip.
+    function paintStartanPanel(context, left, top, tone) {
+        fillBox(context, tone.groove, left, top, 32, 64);
+        fillBox(context, tone.body, left + 2, top + 3, 28, 8);
+        fillBox(context, tone.shine, left + 3, top + 3, 26, 2);
+        fillBox(context, tone.light, left + 3, top + 5, 26, 2);
+        const fade = context.createLinearGradient(0, top + 13, 0, top + 44);
+        fade.addColorStop(0, tone.light);
+        fade.addColorStop(0.3, tone.body);
+        fade.addColorStop(1, tone.strip);
+        fillBox(context, fade, left + 2, top + 13, 28, 31);
+        fillBox(context, tone.shine, left + 3, top + 13, 26, 1);
+        paintStreaks(context, left + 2, top + 14, 28, 30, 0.3);
+        paintDrips(context, left + 3, top + 13, 26, 24, translucent(203, 111, 43, 0.45), tone.drips);
+        fillBox(context, tone.strip, left + 1, top + 48, 30, 13);
+        fillBox(context, tone.light, left + 1, top + 48, 30, 1);
+        fillBox(context, tone.body, left + 7, top + 51, 18, 7);
+        paintStreaks(context, left + 1, top + 49, 30, 12, 0.25);
+    }
+
+    // STARTAN3.
+    function paintStartan(context) {
+        for (const tileTop of [0, 64]) {
+            for (let panel = 0; panel < 4; panel++) {
+                paintStartanPanel(context, panel * 32, tileTop, panel === 1 || panel === 2 ? STARTAN_GREY : STARTAN_TAN);
+            }
+        }
+    }
+
+    // SW1STRTN: tan STARTAN panels with a switch plate. The plate sits where a 72-unit wall shows it at eye height.
+    function paintSwitch(context, redColor, greenColor) {
+        for (const tileTop of [0, 64]) {
+            for (let panel = 0; panel < 2; panel++) { paintStartanPanel(context, panel * 32, tileTop, STARTAN_TAN); }
+        }
+        const plate = context.createLinearGradient(16, 0, 48, 0);
+        plate.addColorStop(0, '#9b9b9b');
+        plate.addColorStop(0.5, '#777777');
+        plate.addColorStop(1, '#575757');
+        fillBox(context, '#2f2f2f', 15, 21, 34, 34);
+        fillBox(context, plate, 16, 22, 32, 32);
+        fillBox(context, '#c7c7c7', 16, 22, 32, 1);
+        fillBox(context, '#1b1b1b', 21, 26, 12, 11);
+        fillBox(context, redColor, 22, 27, 10, 9);
+        fillBox(context, '#1b1b1b', 21, 40, 12, 11);
+        fillBox(context, greenColor, 22, 41, 10, 9);
+        fillBox(context, '#2f2f2f', 38, 27, 2, 22);
+        fillBox(context, '#b7b7b7', 37, 28, 4, 4);
+    }
+
+    // BROWN1.
+    function paintBrown(context) {
+        fillBox(context, '#6b553f', 0, 0, 128, 128);
+        fillBox(context, translucent(127, 83, 47, 0.35), 64, 0, 64, 128);
+        paintStreaks(context, 0, 0, 128, 128, 0.3);
+        for (const seamTop of [14, 74]) {
+            for (let stain = 0; stain < 14; stain++) {
+                const stainLeft = Math.floor(assetRandom() * 124);
+                const stainWidth = 3 + Math.floor(assetRandom() * 5);
+                fillShape(context, translucent(47, 35, 23, 0.4), [[stainLeft, seamTop + 3], [stainLeft + stainWidth, seamTop + 3], [stainLeft + stainWidth / 2, seamTop + 8 + assetRandom() * 26]]);
+            }
+            fillBox(context, '#3f2f1f', 0, seamTop, 128, 2);
+            fillBox(context, '#8b735b', 0, seamTop + 2, 128, 1);
+        }
+        for (let notchLeft = 5; notchLeft < 128; notchLeft += 16) {
+            fillBox(context, '#4b3b2b', notchLeft - 1, 2, 7, 10);
+            fillBox(context, '#8b735b', notchLeft, 3, 5, 6);
+            fillBox(context, '#a38b6f', notchLeft, 3, 5, 1);
+        }
+        paintDrips(context, 64, 17, 64, 50, translucent(91, 99, 71, 0.45), 14);
+        paintDrips(context, 64, 77, 64, 45, translucent(159, 91, 43, 0.35), 12);
+    }
+
+    // BROWNGRN.
+    function paintBrownGreen(context) {
+        fillBox(context, '#2b2b2b', 0, 0, 64, 30);
+        for (let panelLeft = 4; panelLeft < 64; panelLeft += 16) {
+            fillBox(context, '#131313', panelLeft - 1, 7, 10, 15);
+            fillBox(context, '#3f472b', panelLeft, 8, 8, 13);
+            fillBox(context, '#5b6347', panelLeft + 1, 9, 6, 4);
+        }
+        fillBox(context, '#13230b', 0, 30, 64, 98);
+        paintStreaks(context, 0, 33, 64, 95, 0.25);
+        paintDrips(context, 0, 33, 64, 80, translucent(55, 55, 55, 0.5), 40);
+        paintDrips(context, 0, 33, 64, 80, translucent(75, 55, 27, 0.45), 14);
+        fillBox(context, '#1b1b1b', 0, 28, 64, 2);
+        fillBox(context, '#533f1f', 0, 30, 64, 2);
+        fillBox(context, '#775f3f', 0, 30, 64, 1);
+        fillBox(context, '#131313', 0, 0, 64, 2);
+    }
+
+    function paintPanelFrame(context, left, top, width, height) {
+        fillBox(context, '#272727', left, top, width, height);
+        fillBox(context, '#131313', left, top + height - 1, width, 1);
+        fillBox(context, '#131313', left + width - 1, top, 1, height);
+        fillBox(context, '#333333', left, top, width, 1);
+        fillBox(context, '#333333', left, top, 1, height);
+    }
+
+    function paintVent(context, left, top) {
+        for (let slat = 0; slat < 6; slat++) {
+            fillBox(context, '#0b0b0b', left, top + slat * 2, 18, 1);
+        }
+    }
+
+    function paintCircuits(context, left, top, width, height) {
+        fillBox(context, '#070707', left, top, width, height);
+        for (let trace = 0; trace < width * height / 14; trace++) {
+            const color = ['#2f6323', '#4b9f3f', '#9b9b9b', '#17330f', '#dfdfdf'][trace % 5];
+            const horizontal = assetRandom() < 0.5;
+            fillBox(context, color, left + 1 + Math.floor(assetRandom() * (width - 8)), top + 1 + Math.floor(assetRandom() * (height - 8)),
+                horizontal ? 2 + Math.floor(assetRandom() * 6) : 1, horizontal ? 1 : 2 + Math.floor(assetRandom() * 6));
+        }
+        fillBox(context, '#8f8f8f', left + width / 4, top + height / 2, width / 3, height / 5);
+        fillBox(context, '#575757', left + width / 4 + 1, top + height / 2 + 1, width / 3 - 2, height / 5 - 2);
+    }
+
+    function paintConsoleRow(context, left, top, width) {
+        fillBox(context, '#131313', left + 2, top + 2, width - 4, 14);
+        for (let block = 0; block * 22 + 20 < width; block++) {
+            const blockLeft = left + 5 + block * 22;
+            const kind = Math.floor(assetRandom() * 4);
+            if (kind === 0) {
+                for (let key = 0; key < 12; key++) { fillBox(context, '#6b6b6b', blockLeft + (key % 4) * 3, top + 4 + Math.floor(key / 4) * 3, 2, 2); }
+            } else if (kind === 1) {
+                fillBox(context, '#00009b', blockLeft, top + 5, 16, 3);
+                fillBox(context, '#00009b', blockLeft, top + 10, 16, 3);
+            } else if (kind === 2) {
+                for (let lamp = 0; lamp < 10; lamp++) { fillBox(context, lamp % 3 === 0 ? '#ff9f43' : '#af5b17', blockLeft + (lamp % 5) * 3, top + 5 + Math.floor(lamp / 5) * 4, 2, 2); }
+            } else {
+                fillBox(context, '#070707', blockLeft, top + 4, 16, 9);
+                fillBox(context, '#37732b', blockLeft + 2, top + 6, 9, 1);
+                fillBox(context, '#37732b', blockLeft + 2, top + 9, 12, 1);
+            }
+        }
+    }
+
+    // COMPTALL: dark panels with vents, circuit windows, a hazard plate, a monitor, and console rows.
+    function paintComputer(context) {
+        fillBox(context, '#1b1b1b', 0, 0, 256, 128);
+        paintPanelFrame(context, 0, 0, 32, 32);
+        paintVent(context, 7, 10);
+        paintPanelFrame(context, 0, 32, 32, 32);
+        paintVent(context, 7, 42);
+        paintPanelFrame(context, 32, 0, 64, 64);
+        paintCircuits(context, 41, 7, 46, 48);
+        paintPanelFrame(context, 96, 0, 64, 64);
+        paintPanelFrame(context, 104, 8, 48, 48);
+        paintHazard(context, 112, 12, 32, 10);
+        fillBox(context, '#131313', 136, 36, 10, 10);
+        fillBox(context, '#3b3b3b', 138, 38, 6, 6);
+        paintPanelFrame(context, 160, 0, 32, 32);
+        paintVent(context, 167, 10);
+        paintPanelFrame(context, 160, 32, 32, 32);
+        paintVent(context, 167, 42);
+        paintPanelFrame(context, 192, 0, 64, 44);
+        fillBox(context, '#000000', 201, 6, 44, 30);
+        for (let textRow = 0; textRow < 7; textRow++) {
+            fillBox(context, '#27531b', 204, 9 + textRow * 3, 6 + Math.floor(assetRandom() * 14), 1);
+        }
+        fillBox(context, '#00006b', 203, 31, 22, 3);
+        fillBox(context, '#1f4317', 228, 9, 14, 14);
+        fillBox(context, '#000000', 230, 11, 4, 4);
+        fillBox(context, '#000000', 236, 11, 4, 4);
+        fillBox(context, '#000000', 230, 17, 4, 4);
+        fillBox(context, '#000000', 236, 17, 4, 4);
+        paintPanelFrame(context, 192, 44, 64, 20);
+        paintPanelFrame(context, 0, 64, 64, 64);
+        paintCircuits(context, 9, 71, 46, 48);
+        paintPanelFrame(context, 64, 64, 64, 64);
+        paintPanelFrame(context, 72, 72, 48, 48);
+        paintVent(context, 87, 80);
+        paintVent(context, 87, 100);
+        for (const rowTop of [64, 82]) {
+            paintPanelFrame(context, 128, rowTop, 64, 18);
+            paintConsoleRow(context, 128, rowTop, 64);
+            paintPanelFrame(context, 192, rowTop, 64, 18);
+            paintConsoleRow(context, 192, rowTop, 64);
+        }
+        paintPanelFrame(context, 128, 100, 64, 28);
+        paintPanelFrame(context, 192, 100, 64, 28);
+    }
+
+    // BIGDOOR2: a grey steel door with riveted edges, raised plates, rust, and hazard stripes along the bottom.
+    function paintBigDoor(context) {
+        fillBox(context, '#636363', 0, 0, 128, 128);
+        paintStreaks(context, 0, 0, 128, 128, 0.22);
+        fillBox(context, '#4f4f4f', 0, 0, 128, 15);
+        for (let detail = 0; detail < 9; detail++) {
+            fillBox(context, '#777777', 12 + detail * 9, 4, 5, 8);
+            fillBox(context, '#3b3b3b', 12 + detail * 9, 11, 5, 1);
+        }
+        for (let bar = 0; bar < 3; bar++) { fillBox(context, '#9b0000', 104, 3 + bar * 4, 9, 2); }
+        fillBox(context, '#8b8b8b', 0, 15, 128, 1);
+        for (const plate of [[14, 22, 30, 78], [50, 22, 28, 40], [84, 22, 30, 78], [50, 68, 28, 32]]) {
+            fillBox(context, '#474747', plate[0] + 1, plate[1] + 1, plate[2], plate[3]);
+            fillBox(context, '#6f6f6f', plate[0], plate[1], plate[2], plate[3]);
+            fillBox(context, '#8b8b8b', plate[0], plate[1], plate[2], 1);
+            fillBox(context, '#8b8b8b', plate[0], plate[1], 1, plate[3]);
+            paintStreaks(context, plate[0] + 1, plate[1] + 1, plate[2] - 1, plate[3] - 1, 0.2);
+        }
+        fillBox(context, '#9b0000', 36, 60, 8, 3);
+        fillBox(context, '#9b0000', 36, 66, 8, 3);
+        fillBox(context, '#7f0000', 28, 70, 6, 12);
+        paintDrips(context, 14, 16, 100, 60, translucent(191, 107, 43, 0.5), 9);
+        for (const rivetLeft of [4, 122]) {
+            fillBox(context, '#4f4f4f', rivetLeft - 2, 16, 6, 96);
+            for (let rivetTop = 20; rivetTop < 110; rivetTop += 8) {
+                fillBox(context, '#9b9b9b', rivetLeft, rivetTop, 2, 2);
+                fillBox(context, '#2f2f2f', rivetLeft + 1, rivetTop + 2, 2, 1);
+            }
+        }
+        fillBox(context, '#3b3b3b', 0, 110, 128, 18);
+        fillBox(context, '#777777', 0, 110, 128, 1);
+        paintHazard(context, 14, 116, 34, 8);
+        paintHazard(context, 80, 116, 34, 8);
+        fillBox(context, '#9b0000', 3, 116, 7, 8);
+        fillBox(context, '#9b0000', 118, 116, 7, 8);
+        fillBox(context, '#575757', 52, 114, 24, 12);
+    }
+
+    // DOOR3: a brushed steel door with a handle box.
+    function paintDoor(context) {
+        const brushed = context.createLinearGradient(0, 0, 64, 0);
+        brushed.addColorStop(0, '#4f4f4f');
+        brushed.addColorStop(0.3, '#878787');
+        brushed.addColorStop(0.7, '#6f6f6f');
+        brushed.addColorStop(1, '#434343');
+        fillBox(context, brushed, 0, 0, 64, 72);
+        paintStreaks(context, 0, 0, 64, 72, 0.2);
+        fillBox(context, '#4b4b4b', 8, 6, 46, 1);
+        fillBox(context, '#4b4b4b', 8, 6, 1, 56);
+        fillBox(context, '#9b9b9b', 8, 62, 46, 1);
+        fillBox(context, '#9b9b9b', 54, 6, 1, 57);
+        for (let slot = 0; slot < 5; slot++) {
+            fillBox(context, '#474747', 14 + slot * 8, 9, 1, 8);
+            fillBox(context, '#474747', 14 + slot * 8, 54, 1, 6);
+        }
+        fillBox(context, '#3b3b3b', 45, 31, 15, 20);
+        fillBox(context, '#a3a3a3', 46, 32, 13, 18);
+        fillBox(context, '#6b6b6b', 48, 36, 5, 12);
+        fillBox(context, '#2f2f2f', 50, 38, 2, 9);
+        fillBox(context, '#575757', 0, 66, 64, 1);
+        fillBox(context, '#3b3b3b', 0, 70, 64, 2);
+    }
+
+    // SUPPORT2: three steel shafts with small recessed plates.
+    function paintSupport(context) {
+        for (let shaft = 0; shaft < 3; shaft++) {
+            const shaftLeft = Math.round(shaft * 64 / 3);
+            const shine = context.createLinearGradient(shaftLeft, 0, shaftLeft + 22, 0);
+            shine.addColorStop(0, '#434343');
+            shine.addColorStop(0.5, '#8b8b8b');
+            shine.addColorStop(1, '#434343');
+            fillBox(context, shine, shaftLeft, 0, 22, 128);
+            for (let plateTop = 6; plateTop < 128; plateTop += 16) {
+                fillBox(context, '#4b4b4b', shaftLeft + 7, plateTop, 8, 9);
+                fillBox(context, '#777777', shaftLeft + 8, plateTop + 1, 7, 8);
+                fillBox(context, '#636363', shaftLeft + 8, plateTop + 1, 6, 7);
+            }
+        }
+        const band = context.createLinearGradient(0, 0, 0, 128);
+        band.addColorStop(0, translucent(0, 0, 0, 0));
+        band.addColorStop(0.5, translucent(0, 0, 0, 0.45));
+        band.addColorStop(1, translucent(0, 0, 0, 0));
+        fillBox(context, band, 0, 0, 64, 128);
+        paintStreaks(context, 0, 0, 64, 128, 0.12);
+    }
+
+    function paintHexFloor(context, baseColor, patchColors, centerColor, seamColor) {
+        const HALF_FLAT = 11;
+        const HALF_POINT = 21;
+        const HALF_HEIGHT = 16;
+        const CENTERS = [[40, 16], [40, 48], [40, -16], [40, 80], [8, 0], [8, 32], [8, 64], [72, 0], [72, 32], [72, 64], [-24, 16], [-24, 48]];
+        paintMottled(context, FLAT_SIZE, FLAT_SIZE, baseColor, patchColors, 50);
+        for (const center of CENTERS) {
+            fillOval(context, centerColor, center[0] + (assetRandom() - 0.5) * 6, center[1] + (assetRandom() - 0.5) * 4, 11, 8);
+        }
+        context.strokeStyle = seamColor;
+        context.lineWidth = 1.6;
+        for (const center of CENTERS) {
+            context.beginPath();
+            context.moveTo(center[0] - HALF_FLAT, center[1] - HALF_HEIGHT);
+            context.lineTo(center[0] + HALF_FLAT, center[1] - HALF_HEIGHT);
+            context.lineTo(center[0] + HALF_POINT, center[1]);
+            context.lineTo(center[0] + HALF_FLAT, center[1] + HALF_HEIGHT);
+            context.lineTo(center[0] - HALF_FLAT, center[1] + HALF_HEIGHT);
+            context.lineTo(center[0] - HALF_POINT, center[1]);
+            context.closePath();
+            context.stroke();
+        }
+    }
+
+    // NUKAGE1 to NUKAGE3: dark slime cells divided by bright veins. The cell centers drift between the frames.
+    function paintNukage(context, phase) {
+        const CELL_COUNT = 16;
+        const cellRandom = createRandomGenerator(ASSET_SEED);
+        const centers = [];
+        for (let cell = 0; cell < CELL_COUNT; cell++) {
+            const turn = phase + cell * 1.7;
+            centers.push([cellRandom() * FLAT_SIZE + 2.5 * Math.cos(turn), cellRandom() * FLAT_SIZE + 2.5 * Math.sin(turn)]);
+        }
+        for (let row = 0; row < FLAT_SIZE; row++) {
+            for (let column = 0; column < FLAT_SIZE; column++) {
+                let nearest = Infinity;
+                let second = Infinity;
+                for (const center of centers) {
+                    const deltaX = Math.abs(column - center[0]) % FLAT_SIZE;
+                    const deltaY = Math.abs(row - center[1]) % FLAT_SIZE;
+                    const distance = Math.hypot(Math.min(deltaX, FLAT_SIZE - deltaX), Math.min(deltaY, FLAT_SIZE - deltaY));
+                    if (distance < nearest) {
+                        second = nearest;
+                        nearest = distance;
+                    } else if (distance < second) {
+                        second = distance;
+                    }
+                }
+                const vein = clamp(1 - (second - nearest) / 9, 0, 1);
+                const pit = clamp(1 - nearest / 4, 0, 1);
+                const glow = vein * vein;
+                const core = glow * glow * glow;
+                fillBox(context, 'rgb(' + Math.round(19 + 24 * glow + 30 * core - 10 * pit) + ',' + Math.round(35 + 56 * glow + 64 * core - 16 * pit) + ','
+                    + Math.round(11 + 20 * glow + 30 * core - 5 * pit) + ')', column, row, 1, 1);
+            }
+        }
+    }
+
+    // SKY1: a pale overcast sky, a hazy grey range, and near-black peaks in front.
+    function paintSky(context) {
+        const FAR_RANGE = [[18, 128], [22, 70], [40, 30], [58, 20], [86, 18], [104, 30], [112, 44], [124, 128]];
+        const HAZE_RANGE = [[160, 128], [170, 62], [186, 44], [200, 46], [212, 66], [216, 128]];
+        const NEAR_PEAKS = [
+            [[72, 128], [90, 84], [100, 52], [112, 32], [136, 24], [152, 32], [164, 60], [182, 96], [196, 128]],
+            [[-44, 128], [-36, 60], [-22, 30], [-2, 26], [10, 40], [24, 70], [40, 104], [52, 128]],
+            [[212, 128], [220, 60], [234, 30], [254, 26], [266, 40], [280, 70], [296, 104], [308, 128]]
+        ];
+        const haze = context.createLinearGradient(0, 0, 0, SKY_HEIGHT);
+        haze.addColorStop(0, '#b3b3b3');
+        haze.addColorStop(0.6, '#c7c7c7');
+        haze.addColorStop(1, '#bbbbbb');
+        fillBox(context, haze, 0, 0, SKY_WIDTH, SKY_HEIGHT);
+        fillShape(context, '#9f9f9f', HAZE_RANGE);
+        fillShape(context, '#6b6b6b', FAR_RANGE);
+        fillShape(context, translucent(91, 91, 91, 0.6), [[40, 128], [60, 50], [86, 18], [104, 30], [112, 44], [124, 128]]);
+        // The near peaks are drawn on their own layer, so that the rock specks land only on the peaks.
+        const peaks = createCanvasContext(SKY_WIDTH, SKY_HEIGHT);
+        for (const peak of NEAR_PEAKS) {
+            fillShape(peaks, '#1b1b1b', peak);
+        }
+        peaks.globalCompositeOperation = 'source-atop';
+        for (let speck = 0; speck < 1400; speck++) {
+            const color = ['#2f2f2f', '#131313', '#232b0f', '#373737'][speck % 4];
+            fillBox(peaks, color, Math.floor(assetRandom() * SKY_WIDTH), 24 + Math.floor(assetRandom() * 104), 2, 1);
+        }
+        context.drawImage(peaks.canvas, 0, 0);
+    }
+
+    function createTextures() {
+        const nukageFrames = [0, 1, 2].map((frameIndex) => rasterize(FLAT_SIZE, FLAT_SIZE, 5, (context) => paintNukage(context, frameIndex * TWO_PI / 3)));
+        return {
+            startan: rasterize(128, 128, 7, paintStartan),
+            brown: rasterize(128, 128, 7, paintBrown),
+            brownGreen: rasterize(64, 128, 5, paintBrownGreen),
+            // COMPSPAN.
+            panel: rasterize(32, 128, 3, (context) => {
+                paintPanelFrame(context, 0, 0, 32, 64);
+                paintPanelFrame(context, 0, 64, 32, 64);
+            }),
+            computer: rasterize(256, 128, 3, paintComputer),
+            bigDoor: rasterize(128, BIG_DOOR_FRAME_HEIGHT, 5, paintBigDoor),
+            door: rasterize(64, DOOR_FRAME_HEIGHT, 5, paintDoor),
+            // DOORTRAK.
+            doorTrack: rasterize(8, 128, 4, (context) => {
+                fillBox(context, '#131313', 0, 0, 8, 128);
+                fillBox(context, '#2f2f2f', 1, 0, 6, 128);
+                for (let dashTop = 0; dashTop < 128; dashTop += 8) {
+                    fillBox(context, '#474747', 3, dashTop, 2, 4);
+                    fillBox(context, '#070707', 3, dashTop + 4, 2, 4);
+                }
+            }),
+            // STEP6.
+            step: rasterize(32, 16, 6, (context) => {
+                fillBox(context, '#67533f', 0, 0, 32, 16);
+                fillBox(context, '#8b735b', 0, 0, 32, 2);
+                fillBox(context, '#3f2f17', 0, 3, 32, 1);
+                fillBox(context, '#775f4b', 3, 6, 26, 6);
+                fillBox(context, '#574333', 0, 13, 32, 3);
+            }),
+            support: rasterize(64, 128, 4, paintSupport),
+            switchOff: rasterize(64, 128, 6, (context) => paintSwitch(context, '#ff0000', '#17330f')),
+            switchOn: rasterize(64, 128, 6, (context) => paintSwitch(context, '#5b0000', '#4bef3f')),
+            // FLOOR4_8.
+            floorHex: rasterize(FLAT_SIZE, FLAT_SIZE, 7, (context) => paintHexFloor(context, '#2b2b2b', ['#232323', '#373737', '#2f2f2f', '#1f2b17'], translucent(87, 87, 87, 0.5), '#1f170b')),
+            // FLOOR5_2.
+            floorBrown: rasterize(FLAT_SIZE, FLAT_SIZE, 6, (context) => paintHexFloor(context, '#573f1f', ['#5f4323', '#4b371b', '#533f1f'], translucent(119, 79, 43, 0.4), '#33270f')),
+            // CEIL3_5.
+            ceilPlate: rasterize(FLAT_SIZE, FLAT_SIZE, 4, (context) => {
+                fillBox(context, '#373737', 0, 0, 64, 64);
+                for (const seamLeft of [16, 46]) {
+                    fillBox(context, '#2b2b2b', seamLeft, 0, 2, 64);
+                    fillBox(context, '#3f3f3f', seamLeft + 2, 0, 1, 64);
+                }
+                fillBox(context, '#2b2b2b', 0, 54, 64, 2);
+                fillBox(context, '#3f3f3f', 0, 56, 64, 1);
+                for (let speck = 0; speck < 30; speck++) {
+                    fillBox(context, '#2f2f2f', Math.floor(assetRandom() * 64), Math.floor(assetRandom() * 64), 2, 1);
+                }
+            }),
+            // FLAT20.
+            tiles: rasterize(FLAT_SIZE, FLAT_SIZE, 5, (context) => {
+                fillBox(context, '#676767', 0, 0, 64, 64);
+                for (let tileTop = 0; tileTop < 64; tileTop += 8) {
+                    for (let tileLeft = 0; tileLeft < 64; tileLeft += 8) {
+                        fillBox(context, '#8b8b8b', tileLeft, tileTop, 8, 1);
+                        fillBox(context, '#8b8b8b', tileLeft, tileTop, 1, 8);
+                        fillBox(context, '#4f4f4f', tileLeft, tileTop + 7, 8, 1);
+                        fillBox(context, '#4f4f4f', tileLeft + 7, tileTop, 1, 8);
+                    }
+                }
+            }),
+            // FLOOR7_2.
+            rocks: rasterize(FLAT_SIZE, FLAT_SIZE, 8, (context) => paintMottled(context, 64, 64, '#373f27', ['#2f371f', '#3f472b', '#474f33', '#232b0f', '#53573b', '#2f371f'], 90)),
+            // FLAT14.
+            blueFloor: rasterize(FLAT_SIZE, FLAT_SIZE, 0, (context) => {
+                const BLUES = ['#00003b', '#000053', '#00006b', '#000047', '#00002f', '#000053'];
+                for (let row = 0; row < FLAT_SIZE; row++) {
+                    for (let column = 0; column < FLAT_SIZE; column++) {
+                        fillBox(context, BLUES[Math.floor(assetRandom() * BLUES.length)], column, row, 1, 1);
+                    }
+                }
+            }),
+            // TLITE6_5.
+            redLights: rasterize(FLAT_SIZE, FLAT_SIZE, 4, (context) => {
+                fillBox(context, '#171717', 0, 0, 64, 64);
+                for (const lightCenter of [[16, 16], [48, 16], [16, 48], [48, 48]]) {
+                    const glow = context.createRadialGradient(lightCenter[0], lightCenter[1], 0, lightCenter[0], lightCenter[1], 7);
+                    glow.addColorStop(0, '#ff5f5f');
+                    glow.addColorStop(0.5, '#cb0000');
+                    glow.addColorStop(1, '#5b0000');
+                    fillOval(context, glow, lightCenter[0], lightCenter[1], 7, 7);
+                }
+            }),
+            nukage: { width: FLAT_SIZE, height: FLAT_SIZE, pixels: nukageFrames[0].pixels, frames: nukageFrames },
+            sky: rasterize(SKY_WIDTH, SKY_HEIGHT, 9, paintSky)
+        };
+    }
+
+    // ---------------------------------------------------------------- sprites
+
+    // Each painter imitates the shape and colors of the Doom sprite that its comment names.
+
+    const SPRITE_SIZE = 64;
+    const SPRITE_CENTER = SPRITE_SIZE / 2;
+    const DEATH_FRAMES = [
+        { heightFactor: 0.96, widthFactor: 1, bloodDrops: 14 },
+        { heightFactor: 0.82, widthFactor: 1, bloodDrops: 22 },
+        { heightFactor: 0.62, widthFactor: 1.08, bloodDrops: 22 },
+        { heightFactor: 0.46, widthFactor: 1.16, bloodDrops: 16 },
+        { heightFactor: 0.3, widthFactor: 1.2, bloodDrops: 10 }
+    ];
+
+    // Paints shapes mirrored about the vertical center line of the sprite.
+    function flipped(context, paintSide) {
+        context.save();
+        context.translate(SPRITE_SIZE, 0);
+        context.scale(-1, 1);
+        paintSide(context);
+        context.restore();
+    }
+
+    // Paints one side of a symmetric figure, then the same shapes mirrored about the vertical center line.
+    function mirrored(context, paintSide) {
+        paintSide(context);
+        flipped(context, paintSide);
+    }
+
+    const RELIEF_BLUR_RADIUS = 2;
+    const RELIEF_BLUR_PASSES = 2;
+    const RELIEF_CONTRAST = 1.5;
+    const RELIEF_GLOW = 45;
+
+    // Paints one body part on its own layer, shades the layer as a rounded solid that is lit from the upper left, and
+    // draws the layer onto the sprite. Doom's sprites were photographed from lit clay and latex models, and this
+    // shading gives the painted parts that roundness. Inside paint, the parameter is the layer to paint on.
+    function paintPart(context, paint) {
+        const width = context.canvas.width;
+        const height = context.canvas.height;
+        const layer = createCanvasContext(width, height);
+        layer.setTransform(context.getTransform());
+        paint(layer);
+        const image = layer.getImageData(0, 0, width, height);
+        const colors = image.data;
+        // The height of the solid at each pixel is the blurred coverage of the part: low at its edges, high inside.
+        let heights = new Float32Array(width * height);
+        for (let pixelIndex = 0; pixelIndex < heights.length; pixelIndex++) { heights[pixelIndex] = colors[pixelIndex * 4 + 3] / 255; }
+        for (let pass = 0; pass < RELIEF_BLUR_PASSES * 2; pass++) {
+            const blurred = new Float32Array(width * height);
+            const alongRow = pass % 2 === 0;
+            for (let row = 0; row < height; row++) {
+                for (let column = 0; column < width; column++) {
+                    const position = alongRow ? column : row;
+                    const limit = alongRow ? width : height;
+                    let sum = 0;
+                    for (let offset = -RELIEF_BLUR_RADIUS; offset <= RELIEF_BLUR_RADIUS; offset++) {
+                        if (position + offset >= 0 && position + offset < limit) { sum += heights[row * width + column + offset * (alongRow ? 1 : width)]; }
+                    }
+                    blurred[row * width + column] = sum / (RELIEF_BLUR_RADIUS * 2 + 1);
+                }
+            }
+            heights = blurred;
+        }
+        const heightAt = (column, row) => column < 0 || row < 0 || column >= width || row >= height ? 0 : heights[row * width + column];
+        for (let row = 0; row < height; row++) {
+            for (let column = 0; column < width; column++) {
+                const colorIndex = (row * width + column) * 4;
+                if (colors[colorIndex + 3] === 0) { continue; }
+                const light = heightAt(column + 1, row + 1) - heightAt(column - 1, row - 1);
+                for (let channel = 0; channel < 3; channel++) {
+                    colors[colorIndex + channel] = clamp(Math.round(colors[colorIndex + channel] * (1 + light * RELIEF_CONTRAST) + Math.max(0, light) * RELIEF_GLOW), 0, 255);
+                }
+            }
+        }
+        layer.putImageData(image, 0, 0);
+        context.save();
+        context.resetTransform();
+        context.drawImage(layer.canvas, 0, 0);
+        context.restore();
+    }
+
+    // Lights a finished figure from the upper left, as Doom's sprites are lit.
+    function shadeFigure(context) {
+        context.globalCompositeOperation = 'source-atop';
+        const shading = context.createLinearGradient(12, 0, 52, 24);
+        shading.addColorStop(0, translucent(255, 255, 255, 0.08));
+        shading.addColorStop(0.45, translucent(0, 0, 0, 0));
+        shading.addColorStop(1, translucent(0, 0, 0, 0.3));
+        fillBox(context, shading, 0, 0, SPRITE_SIZE, SPRITE_SIZE);
+        context.globalCompositeOperation = 'source-over';
+    }
+
+    // POSS: the zombieman. A tan shirt with a bloody chest, grey-green trousers, maroon boots, green hair, and a grey rifle.
+    function paintZombie(context, pose) {
+        const PANTS = '#5b6347';
+        const PANTS_DARK = '#373f27';
+        const BOOT = '#5b1f1f';
+        const SHIRT = '#8f7353';
+        const SHIRT_DARK = '#6f5743';
+        const SKIN = '#c38f73';
+        const FOREARM = '#b78363';
+        const GLOVE = '#7f2f2f';
+        const BLOOD = '#9b0000';
+        const GUN = '#575757';
+        const GUN_DARK = '#232323';
+        const stride = pose.stride;
+        const leftLift = stride > 0 ? 4 : 0;
+        const rightLift = stride < 0 ? 4 : 0;
+        paintPart(context, (context) => {
+        strokeLine(context, PANTS, 9, 27, 41, 25 - stride * 2, 56 - leftLift);
+        strokeLine(context, PANTS, 9, 37, 41, 39 + stride * 2, 56 - rightLift);
+        strokeLine(context, PANTS_DARK, 2, 30, 43, 29 - stride * 2, 56 - leftLift);
+        strokeLine(context, PANTS_DARK, 2, 34, 43, 35 + stride * 2, 56 - rightLift);
+        fillOval(context, BLOOD, 25 - stride, 49 - leftLift, 3, 4);
+        fillOval(context, BLOOD, 39 + stride, 46 - rightLift, 2.5, 3);
+        fillOval(context, BOOT, 24 - stride * 2, 60 - leftLift, 6, 4);
+        fillOval(context, BOOT, 40 + stride * 2, 60 - rightLift, 6, 4);
+        });
+        paintPart(context, (context) => {
+        fillShape(context, SHIRT, [[19, 21], [45, 21], [43, 41], [21, 41]]);
+        fillOval(context, SHIRT, 18, 25, 6, 5);
+        fillOval(context, SHIRT, 46, 25, 6, 5);
+        fillShape(context, SHIRT_DARK, [[22, 36], [42, 36], [43, 41], [21, 41]]);
+        fillBox(context, '#2f2f2f', 21, 40, 22, 2);
+        fillShape(context, BLOOD, [[29, 23], [35, 24], [37, 29], [34, 35], [30, 33], [27, 28]]);
+        fillBox(context, '#d70000', 31, 26, 3, 3);
+        fillBox(context, BLOOD, 25, 33, 2, 3);
+        fillBox(context, BLOOD, 38, 24, 2, 2);
+        });
+        paintPart(context, (context) => {
+        if (pose.arms === 'hold') {
+            strokeLine(context, SHIRT, 7, 17, 26, 15, 34);
+            strokeLine(context, FOREARM, 6, 15, 34, 21, 38);
+            strokeLine(context, SHIRT, 7, 47, 26, 49, 33);
+            strokeLine(context, FOREARM, 6, 49, 33, 43, 31);
+            context.lineCap = 'butt';
+            fillShape(context, GUN_DARK, [[6, 39], [18, 35], [20, 41], [9, 46]]);
+            fillShape(context, GUN_DARK, [[16, 36], [44, 25], [46, 30], [18, 41]]);
+            fillShape(context, GUN, [[18, 37], [43, 27], [44, 29], [19, 39]]);
+            fillShape(context, GUN_DARK, [[44, 26], [55, 22], [56, 24], [45, 28]]);
+            fillShape(context, GUN_DARK, [[28, 36], [32, 35], [34, 41], [30, 42]]);
+            fillOval(context, GLOVE, 22, 38, 3.5, 3.5);
+            fillOval(context, GLOVE, 42, 30, 3.5, 3.5);
+        } else if (pose.arms === 'aim') {
+            strokeLine(context, SHIRT, 7, 17, 26, 18, 33);
+            strokeLine(context, FOREARM, 6, 18, 33, 26, 34);
+            strokeLine(context, SHIRT, 7, 47, 26, 46, 33);
+            strokeLine(context, FOREARM, 6, 46, 33, 38, 34);
+            fillShape(context, GUN_DARK, [[25, 28], [39, 28], [38, 38], [26, 38]]);
+            fillBox(context, GUN, 27, 29, 10, 3);
+            fillOval(context, '#070707', 32, 34, 2.5, 2.5);
+            fillOval(context, GLOVE, 25, 35, 3.5, 3.5);
+            fillOval(context, GLOVE, 39, 35, 3.5, 3.5);
+            if (pose.flash) {
+                fillShape(context, '#ff7b1b', [[32, 22], [35, 30], [43, 28], [37, 34], [42, 42], [32, 38], [22, 42], [27, 34], [21, 28], [29, 30]]);
+                fillOval(context, '#ffe74b', 32, 34, 5, 5);
+                fillOval(context, '#ffffff', 32, 34, 2.5, 2.5);
+            }
+        } else if (pose.arms === 'spread') {
+            strokeLine(context, SHIRT, 7, 17, 26, 9, 20);
+            strokeLine(context, FOREARM, 6, 9, 20, 6, 13);
+            strokeLine(context, SHIRT, 7, 47, 26, 55, 20);
+            strokeLine(context, FOREARM, 6, 55, 20, 58, 13);
+            strokeLine(context, GUN_DARK, 6, 14, 44, 44, 36);
+            strokeLine(context, GUN, 3, 15, 43, 43, 35);
+        } else {
+            throw new Error('Unknown zombie arm pose: ' + pose.arms);
+        }
+        });
+        const headTop = pose.mouthOpen ? 7 : 9;
+        paintPart(context, (context) => {
+        fillBox(context, SKIN, 29, headTop + 9, 6, 4);
+        fillOval(context, SKIN, 32, headTop + 6, 5.5, 6.5);
+        fillOval(context, '#3f832f', 32, headTop + 1.5, 5.5, 3);
+        fillBox(context, '#1f4317', 27, headTop + 3, 10, 1);
+        fillBox(context, '#8b6347', 28, headTop + 4, 8, 1);
+        fillBox(context, '#430000', 29, headTop + 5, 2, 2);
+        fillBox(context, '#430000', 33, headTop + 5, 2, 2);
+        fillBox(context, pose.mouthOpen ? '#ef0000' : '#8b0000', 30, headTop + 9, 4, pose.mouthOpen ? 3 : 1);
+        });
+        shadeFigure(context);
+    }
+
+    // TROO: the imp. A brown, muscular body with red eyes, an open mouth, and pale spikes on the shoulders, elbows, and knees.
+    function paintImp(context, pose) {
+        const SKIN = '#77532f';
+        const LIGHT = '#a36b3f';
+        const DARK = '#4b371b';
+        const SPIKE = '#cfcfcf';
+        const stride = pose.stride;
+        const leftLift = stride > 0 ? 4 : 0;
+        const rightLift = stride < 0 ? 4 : 0;
+        const paintLeg = (context, hipX, kneeX, lift, direction) => {
+            strokeLine(context, SKIN, 10, hipX, 41, kneeX, 50 - lift);
+            strokeLine(context, SKIN, 7, kneeX, 50 - lift, kneeX + direction, 59 - lift);
+            strokeLine(context, LIGHT, 2, hipX - direction, 42, kneeX - direction, 49 - lift);
+            fillShape(context, SPIKE, [[kneeX - direction * 3, 49 - lift], [kneeX - direction * 8, 47 - lift], [kneeX - direction * 3, 52 - lift]]);
+            fillShape(context, SKIN, [[kneeX - 5, 62 - lift], [kneeX + 6, 62 - lift], [kneeX + 3, 57 - lift], [kneeX - 2, 57 - lift]]);
+            fillBox(context, SPIKE, kneeX - 5, 61 - lift, 2, 1);
+            fillBox(context, SPIKE, kneeX + 4, 61 - lift, 2, 1);
+        };
+        paintPart(context, (layer) => paintLeg(layer, 27, 24 - stride * 2, leftLift, -1));
+        paintPart(context, (layer) => paintLeg(layer, 37, 40 + stride * 2, rightLift, 1));
+        paintPart(context, (context) => {
+        fillShape(context, SKIN, [[17, 21], [47, 21], [40, 42], [24, 42]]);
+        mirrored(context, () => {
+            fillOval(context, SKIN, 17, 24, 7, 6);
+            fillOval(context, LIGHT, 26, 27, 5, 4);
+            fillShape(context, SPIKE, [[11, 22], [4, 15], [15, 19]]);
+            fillShape(context, SPIKE, [[15, 19], [13, 10], [19, 18]]);
+        });
+        fillBox(context, DARK, 31, 23, 2, 18);
+        fillBox(context, DARK, 26, 32, 12, 1);
+        fillBox(context, DARK, 27, 36, 10, 1);
+        });
+        const paintHangingArm = (context) => {
+            strokeLine(context, SKIN, 8, 15, 26, 12, 35);
+            strokeLine(context, SKIN, 7, 12, 35, 15, 43);
+            strokeLine(context, LIGHT, 2, 13, 27, 10, 34);
+            fillShape(context, SPIKE, [[9, 35], [3, 33], [9, 38]]);
+            fillOval(context, LIGHT, 15, 44, 3.5, 3.5);
+        };
+        paintPart(context, (context) => {
+        if (pose.arms === 'down') {
+            mirrored(context, paintHangingArm);
+        } else if (pose.arms === 'raise') {
+            flipped(context, paintHangingArm);
+            strokeLine(context, SKIN, 8, 15, 25, 8, 16);
+            strokeLine(context, SKIN, 7, 8, 16, 10, 9);
+            fillOval(context, '#b30000', 10, 6, 5.5, 5.5);
+            fillOval(context, '#ff7b1b', 10, 6, 3.5, 3.5);
+            fillOval(context, '#ffe74b', 9, 5, 1.5, 1.5);
+        } else if (pose.arms === 'throw') {
+            flipped(context, paintHangingArm);
+            strokeLine(context, SKIN, 8, 15, 26, 7, 30);
+            strokeLine(context, SKIN, 7, 7, 30, 3, 36);
+            strokeLine(context, SPIKE, 1, 3, 36, 0, 40);
+            strokeLine(context, SPIKE, 1, 4, 37, 3, 42);
+            strokeLine(context, SPIKE, 1, 2, 35, 0, 36);
+        } else if (pose.arms === 'spread') {
+            mirrored(context, () => {
+                strokeLine(context, SKIN, 8, 15, 25, 7, 20);
+                strokeLine(context, SKIN, 7, 7, 20, 4, 12);
+                fillOval(context, LIGHT, 4, 11, 3.5, 3.5);
+            });
+        } else {
+            throw new Error('Unknown imp arm pose: ' + pose.arms);
+        }
+        });
+        const headTop = pose.arms === 'spread' ? 5 : 7;
+        paintPart(context, (context) => {
+        fillOval(context, SKIN, 32, headTop + 7, 6.5, 7.5);
+        fillOval(context, LIGHT, 32, headTop + 3, 5, 2.5);
+        fillBox(context, DARK, 27, headTop + 5, 10, 1);
+        fillBox(context, '#ff0000', 28, headTop + 6, 3, 2);
+        fillBox(context, '#ff0000', 33, headTop + 6, 3, 2);
+        fillOval(context, '#3f0000', 32, headTop + 11, 3.5, 3);
+        fillBox(context, '#efefef', 30, headTop + 9, 5, 1);
+        fillBox(context, '#efefef', 30, headTop + 13, 5, 1);
+        fillBox(context, '#cb0000', 31, headTop + 11, 3, 1);
+        });
+        shadeFigure(context);
+    }
+
+    function deathSprites(paintFigure) {
+        const source = createCanvasContext(SPRITE_SIZE, SPRITE_SIZE);
+        paintFigure(source, { stride: 0, arms: 'spread', mouthOpen: true, flash: false });
+        return DEATH_FRAMES.map((frame) => rasterize(SPRITE_SIZE, SPRITE_SIZE, 8, (context) => {
+            const height = Math.round(SPRITE_SIZE * frame.heightFactor);
+            const width = Math.round(SPRITE_SIZE * frame.widthFactor);
+            context.imageSmoothingEnabled = false;
+            context.drawImage(source.canvas, 0, 0, SPRITE_SIZE, SPRITE_SIZE, SPRITE_CENTER - width / 2, SPRITE_SIZE - height, width, height);
+            const chestY = SPRITE_SIZE - height * 0.55;
+            fillOval(context, '#7f0000', SPRITE_CENTER, chestY, 7, 5 * frame.heightFactor + 2);
+            fillOval(context, '#d70000', SPRITE_CENTER - 1, chestY, 3, 3);
+            for (let drop = 0; drop < frame.bloodDrops; drop++) {
+                const turn = assetRandom() * TWO_PI;
+                const reach = 4 + assetRandom() * 16;
+                fillBox(context, drop % 2 === 0 ? '#cb0000' : '#8b0000', SPRITE_CENTER + Math.cos(turn) * reach, chestY + Math.sin(turn) * reach * frame.heightFactor, 2, 2);
+            }
+        }));
+    }
+
+    // BAL1 A and B: the imp fireball.
+    function fireballSprite(coreShift) {
+        return rasterize(16, 16, 8, (context) => {
+            fillOval(context, '#8b0000', 8, 8, 7.5, 7.5);
+            fillOval(context, '#d70000', 8, 8, 6, 6);
+            fillOval(context, '#ff7b1b', 7 + coreShift, 7.5, 3.5, 3);
+            fillOval(context, '#ffe74b', 6.5 + coreShift, 7, 1.8, 1.5);
+        });
+    }
+
+    // BAL1 C to E: the fireball bursts into a growing ring of red smoke.
+    function explosionSprite(radius, sparse) {
+        const size = 52;
+        return rasterize(size, size, 10, (context) => {
+            const blobCount = sparse ? 46 : 10;
+            for (let blob = 0; blob < blobCount; blob++) {
+                const turn = TWO_PI * blob / blobCount + assetRandom();
+                const reach = radius * (sparse ? 0.55 + assetRandom() * 0.45 : 0.6);
+                const blobRadius = sparse ? 1.5 + assetRandom() * 2 : radius * 0.45;
+                fillOval(context, blob % 3 === 0 ? '#a70000' : '#730000', size / 2 + Math.cos(turn) * reach, size / 2 + Math.sin(turn) * reach * 0.9, blobRadius, blobRadius);
+            }
+            if (!sparse) {
+                for (let blob = 0; blob < 7; blob++) {
+                    const turn = TWO_PI * blob / 7 + 0.4;
+                    fillOval(context, '#bf0000', size / 2 + Math.cos(turn) * radius * 0.55, size / 2 + Math.sin(turn) * radius * 0.5, radius * 0.22, radius * 0.2);
+                }
+                context.globalCompositeOperation = 'destination-out';
+                fillOval(context, '#000000', size / 2 + 1, size / 2 + 1, radius * 0.2, radius * 0.18);
+                context.globalCompositeOperation = 'source-over';
+            }
+        });
+    }
+
+    // PUFF A to D: a bullet puff starts as an orange spark and opens into a grey smoke ring.
+    function puffSprite(radius, sparkColor, ringColor) {
+        return rasterize(16, 16, 8, (context) => {
+            if (radius < 3.5) {
+                fillOval(context, ringColor, 8, 8, radius, radius);
+                fillOval(context, sparkColor, 8, 8, radius * 0.6, radius * 0.6);
+                return;
+            }
+            for (let dot = 0; dot < 14; dot++) {
+                const turn = TWO_PI * dot / 14;
+                fillBox(context, ringColor, 8 + Math.cos(turn) * radius - 0.5, 8 + Math.sin(turn) * radius - 0.5, 1.6, 1.6);
+            }
+            fillBox(context, ringColor, 6, 7, 2, 1);
+            fillBox(context, ringColor, 9, 9, 2, 1);
+        });
+    }
+
+    // BLUD A to C: a blood splat.
+    function bloodSprite(radius) {
+        return rasterize(12, 12, 8, (context) => {
+            for (let spike = 0; spike < 9; spike++) {
+                const turn = TWO_PI * spike / 9 + assetRandom() * 0.5;
+                const reach = radius * (0.6 + assetRandom() * 0.5);
+                strokeLine(context, '#b30000', 1.3, 6, 6, 6 + Math.cos(turn) * reach, 6 + Math.sin(turn) * reach);
+            }
+            fillOval(context, '#cb0000', 6, 6, radius * 0.55, radius * 0.55);
+            fillOval(context, '#5b0000', 6, 6, radius * 0.25, radius * 0.25);
+        });
+    }
+
+    // ARM1: the green armor vest.
+    function paintArmor(context, dim) {
+        fillShape(context, '#37732b', [[0, 4], [7, 0], [12, 3], [15.5, 7], [19, 3], [24, 0], [31, 4], [29, 9], [24, 8], [24, 17], [7, 17], [7, 8], [2, 9]]);
+        fillShape(context, '#6fef67', [[2, 4], [7, 1], [11, 3], [6, 6]]);
+        fillShape(context, '#53af47', [[20, 3], [24, 1], [29, 4], [25, 6]]);
+        fillShape(context, '#4b9f3f', [[9, 6], [14, 8], [14, 15], [9, 15]]);
+        fillShape(context, '#17330f', [[12, 3], [15.5, 9], [19, 3], [15.5, 6.5]]);
+        fillBox(context, '#17330f', 15, 9, 1, 8);
+        fillBox(context, '#1f4317', 7, 15, 17, 2);
+        if (dim) {
+            context.globalCompositeOperation = 'source-atop';
+            fillBox(context, translucent(0, 0, 0, 0.35), 0, 0, 31, 17);
+            context.globalCompositeOperation = 'source-over';
+        }
+    }
+
+    // PISG: the pistol, seen from behind in the player's fist. Firing frames move the pistol up and toward the viewer.
+    function paintPistol(context, raise, growth) {
+        const SKIN = '#b37347';
+        const SKIN_LIGHT = '#d78b5b';
+        const SKIN_DARK = '#774f2b';
+        context.translate(SPRITE_CENTER, SPRITE_SIZE);
+        context.scale(growth, growth);
+        context.translate(-SPRITE_CENTER, -SPRITE_SIZE - raise);
+        paintPart(context, (context) => {
+        fillShape(context, SKIN, [[-4, 96], [42, 96], [52, 54], [46, 40], [14, 38], [5, 46]]);
+        fillOval(context, SKIN, 29, 46, 22, 11);
+        fillOval(context, SKIN_LIGHT, 22, 42, 12, 5);
+        fillOval(context, SKIN, 50, 43, 5, 8);
+        fillOval(context, SKIN_DARK, 53, 47, 1.5, 5);
+        strokeLine(context, SKIN_DARK, 1.5, 12, 48, 46, 53);
+        strokeLine(context, SKIN_DARK, 1.5, 7, 53, 45, 59);
+        strokeLine(context, SKIN_DARK, 1.5, 4, 59, 42, 65);
+        strokeLine(context, SKIN_LIGHT, 1, 8, 50, 44, 56);
+        });
+        paintPart(context, (context) => {
+        fillShape(context, '#070707', [[29, 1], [37, 1], [42, 9], [45, 24], [46, 38], [20, 38], [21, 24], [24, 9]]);
+        fillShape(context, '#2f332b', [[30, 3], [36, 3], [40, 10], [43, 30], [23, 30], [26, 10]]);
+        fillShape(context, '#5b5f4f', [[30, 4], [33, 4], [31, 29], [25, 29], [27, 11]]);
+        fillBox(context, '#9b9b9b', 32, 1, 2, 2);
+        fillBox(context, '#070707', 27, 14, 12, 6);
+        fillBox(context, '#474b3b', 28, 21, 10, 7);
+        fillBox(context, '#6f735f', 28, 21, 10, 1);
+        fillBox(context, '#1b1b1b', 21, 31, 24, 6);
+        for (let stud = 0; stud < 6; stud++) { fillBox(context, '#6f6f6f', 23 + stud * 4, 33, 2, 2); }
+        });
+        context.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    // PISF: the pistol's muzzle flash, a red flame with a pale chevron core.
+    function paintPistolFlash(context) {
+        fillShape(context, '#ef0000', [[21, 0], [26, 11], [33, 8], [32, 18], [41, 24], [35, 30], [37, 38], [5, 38], [7, 30], [1, 24], [10, 18], [9, 8], [16, 11]]);
+        fillShape(context, '#ff7b7b', [[21, 4], [28, 18], [34, 24], [30, 38], [12, 38], [8, 24], [14, 18]]);
+        fillShape(context, '#ffffd7', [[21, 7], [31, 32], [26, 32], [21, 20], [16, 32], [11, 32]]);
+        fillShape(context, '#ff9f43', [[21, 24], [26, 38], [16, 38]]);
+    }
+
+    // STF: the marine's face on the status bar.
+    function paintFace(context, bloodLevel, lookOffset, expression) {
+        const BLOOD_MARKS = [[10, 19, 2, 4], [5, 7, 2, 5], [17, 6, 2, 7], [13, 20, 3, 5], [6, 17, 2, 6], [11, 25, 3, 3], [3, 12, 2, 5], [19, 14, 2, 6], [8, 3, 2, 4], [15, 9, 2, 4]];
+        const HAIR = '#5f4323';
+        const HAIR_DARK = '#33270f';
+        const SKIN = expression === 'dead' ? '#8f6f5b' : '#b37347';
+        const SKIN_LIGHT = expression === 'dead' ? '#ab8b77' : '#d78b5b';
+        const SKIN_DARK = '#875733';
+        const SHADE = '#6b4727';
+        fillShape(context, SKIN, [[3, 6], [20, 6], [22, 10], [22, 19], [20, 24], [16, 29], [8, 29], [4, 24], [2, 19], [2, 10]]);
+        fillBox(context, SKIN_DARK, 0, 11, 2, 6);
+        fillBox(context, SKIN_DARK, 22, 11, 2, 6);
+        fillShape(context, HAIR, [[2, 11], [2, 4], [5, 1], [11, 0], [18, 1], [22, 4], [22, 11], [19, 7], [15, 6], [12, 7], [8, 6], [4, 7]]);
+        fillShape(context, '#7b5b33', [[6, 2], [11, 1], [17, 2], [15, 4], [8, 4]]);
+        fillBox(context, SKIN_LIGHT, 6, 8, 12, 2);
+        fillBox(context, SKIN_DARK, 2, 11, 2, 10);
+        fillBox(context, SKIN_DARK, 20, 11, 2, 10);
+        fillBox(context, HAIR_DARK, 4, 10, 7, 2);
+        fillBox(context, HAIR_DARK, 13, 10, 7, 2);
+        fillBox(context, HAIR_DARK, 9, 12, 2, 1);
+        fillBox(context, HAIR_DARK, 13, 12, 2, 1);
+        fillBox(context, SHADE, 4, 12, 6, 3);
+        fillBox(context, SHADE, 14, 12, 6, 3);
+        if (expression === 'dead') {
+            fillBox(context, HAIR_DARK, 5, 14, 5, 1);
+            fillBox(context, HAIR_DARK, 14, 14, 5, 1);
+        } else {
+            const eyeTop = expression === 'ouch' ? 12 : 13;
+            fillBox(context, '#efefef', 5, eyeTop, 5, 15 - eyeTop);
+            fillBox(context, '#efefef', 14, eyeTop, 5, 15 - eyeTop);
+            fillBox(context, '#1b1b1b', 7 + lookOffset, eyeTop, 2, 15 - eyeTop);
+            fillBox(context, '#1b1b1b', 15 + lookOffset, eyeTop, 2, 15 - eyeTop);
+        }
+        fillBox(context, SKIN_LIGHT, 11, 12, 2, 7);
+        fillBox(context, SKIN_LIGHT, 5, 16, 4, 3);
+        fillBox(context, SKIN_LIGHT, 15, 16, 4, 3);
+        fillBox(context, SHADE, 10, 19, 4, 1);
+        fillBox(context, SKIN_DARK, 9, 18, 1, 1);
+        fillBox(context, SKIN_DARK, 14, 18, 1, 1);
+        if (expression === 'ouch') {
+            fillBox(context, '#2b0b0b', 8, 20, 8, 6);
+            fillBox(context, '#efefef', 9, 20, 6, 1);
+            fillBox(context, '#9b0000', 10, 24, 4, 1);
+        } else {
+            fillBox(context, HAIR_DARK, 8, 22, 8, 1);
+            fillBox(context, SKIN_DARK, 9, 23, 6, 1);
+        }
+        fillBox(context, SKIN_LIGHT, 9, 26, 6, 2);
+        fillBox(context, SKIN_DARK, 5, 25, 2, 2);
+        fillBox(context, SKIN_DARK, 17, 25, 2, 2);
+        const markCount = expression === 'dead' ? BLOOD_MARKS.length : bloodLevel * 2;
+        for (let markIndex = 0; markIndex < markCount; markIndex++) {
+            const mark = BLOOD_MARKS[markIndex];
+            fillBox(context, markIndex % 2 === 0 ? '#af0000' : '#7f0000', mark[0], mark[1], mark[2], mark[3]);
+        }
+    }
+
+    function createSprites() {
+        const figure = (paintFigure, stride, arms, mouthOpen, flash) =>
+            rasterize(SPRITE_SIZE, SPRITE_SIZE, 8, (context) => paintFigure(context, { stride: stride, arms: arms, mouthOpen: mouthOpen, flash: flash }));
+        const faceSprite = (bloodLevel, lookOffset, expression) => rasterize(24, 29, 5, (context) => paintFace(context, bloodLevel, lookOffset, expression));
+        const bloodLevels = Array.from({ length: FACE_BLOOD_LEVELS }, (unused, bloodLevel) => bloodLevel);
+        return {
+            zombie: {
+                walk: [figure(paintZombie, 1, 'hold', false, false), figure(paintZombie, -1, 'hold', false, false)],
+                aim: figure(paintZombie, 0, 'aim', false, false),
+                fire: figure(paintZombie, 0, 'aim', false, true),
+                pain: figure(paintZombie, 0, 'spread', true, false),
+                die: deathSprites(paintZombie)
+            },
+            imp: {
+                walk: [figure(paintImp, 1, 'down', false, false), figure(paintImp, -1, 'down', false, false)],
+                raise: figure(paintImp, 0, 'raise', true, false),
+                throw: figure(paintImp, 0, 'throw', true, false),
+                pain: figure(paintImp, 0, 'spread', true, false),
+                die: deathSprites(paintImp)
+            },
+            fireball: [fireballSprite(0), fireballSprite(2)],
+            explosion: [explosionSprite(15, false), explosionSprite(20, false), explosionSprite(24, true)],
+            puff: [puffSprite(2, '#ffc74b', '#d75f0b'), puffSprite(3.2, '#c79b6b', '#8f6f4f'), puffSprite(5, '#000000', '#777777'), puffSprite(7, '#000000', '#5b5b5b')],
+            blood: [bloodSprite(5.5), bloodSprite(4), bloodSprite(2.5)],
+            // STIM.
+            stimpack: [rasterize(14, 15, 5, (context) => {
+                fillShape(context, '#ababab', [[2, 1], [12, 1], [14, 4], [0, 4]]);
+                fillBox(context, '#6b6b6b', 0, 4, 14, 10);
+                fillBox(context, '#939393', 0, 4, 14, 1);
+                fillBox(context, '#5b472b', 0, 13, 14, 2);
+                fillBox(context, '#dfdfdf', 6, 2, 2, 1);
+                fillBox(context, '#cb0000', 6, 6, 2, 6);
+                fillBox(context, '#cb0000', 4, 8, 6, 2);
+            })],
+            // CLIP.
+            clip: [rasterize(9, 11, 4, (context) => {
+                fillBox(context, '#232323', 0, 1, 9, 10);
+                fillBox(context, '#373737', 1, 2, 7, 8);
+                fillBox(context, '#131313', 3, 2, 1, 8);
+                fillBox(context, '#131313', 5, 2, 1, 8);
+                fillBox(context, '#575757', 1, 2, 1, 8);
+                fillBox(context, '#874307', 1, 0, 7, 1);
+            })],
+            armor: [rasterize(31, 17, 5, (context) => paintArmor(context, false)), rasterize(31, 17, 5, (context) => paintArmor(context, true))],
+            pistol: [[0, 1], [5, 1.14], [3, 1.07]].map((frame) => rasterize(SPRITE_SIZE, SPRITE_SIZE, 6, (context) => paintPistol(context, frame[0], frame[1]))),
+            pistolFlash: rasterize(42, 38, 6, paintPistolFlash),
+            faces: bloodLevels.map((bloodLevel) => [-1, 0, 1].map((lookOffset) => faceSprite(bloodLevel, lookOffset, 'normal'))),
+            ouchFaces: bloodLevels.map((bloodLevel) => faceSprite(bloodLevel, 0, 'ouch')),
+            deadFace: faceSprite(0, 0, 'dead')
+        };
+    }
+
+    // ---------------------------------------------------------------- fonts and status bar
+
+    const GLYPH_COLUMNS = 5;
+    const GLYPH_ROWS = 7;
+    const SPACE_ADVANCE = 4;
+    // Each glyph is GLYPH_ROWS rows of GLYPH_COLUMNS cells. createFont doubles every vertical stroke, which gives the
+    // heavy, blocky letters of Doom's message font.
+    const GLYPHS = {
+        'A': '01110 10001 10001 11111 10001 10001 10001', 'B': '11110 10001 10001 11110 10001 10001 11110',
+        'C': '01110 10001 10000 10000 10000 10001 01110', 'D': '11110 10001 10001 10001 10001 10001 11110',
+        'E': '11111 10000 10000 11110 10000 10000 11111', 'F': '11111 10000 10000 11110 10000 10000 10000',
+        'G': '01110 10001 10000 10111 10001 10001 01111', 'H': '10001 10001 10001 11111 10001 10001 10001',
+        'I': '01110 00100 00100 00100 00100 00100 01110', 'J': '00111 00010 00010 00010 00010 10010 01100',
+        'K': '10001 10010 10100 11000 10100 10010 10001', 'L': '10000 10000 10000 10000 10000 10000 11111',
+        'M': '10001 11011 10101 10101 10001 10001 10001', 'N': '10001 11001 10101 10011 10001 10001 10001',
+        'O': '01110 10001 10001 10001 10001 10001 01110', 'P': '11110 10001 10001 11110 10000 10000 10000',
+        'Q': '01110 10001 10001 10001 10101 10010 01101', 'R': '11110 10001 10001 11110 10100 10010 10001',
+        'S': '01111 10000 10000 01110 00001 00001 11110', 'T': '11111 00100 00100 00100 00100 00100 00100',
+        'U': '10001 10001 10001 10001 10001 10001 01110', 'V': '10001 10001 10001 10001 10001 01010 00100',
+        'W': '10001 10001 10001 10101 10101 11011 10001', 'X': '10001 10001 01010 00100 01010 10001 10001',
+        'Y': '10001 10001 01010 00100 00100 00100 00100', 'Z': '11111 00001 00010 00100 01000 10000 11111',
+        '0': '01110 10001 10011 10101 11001 10001 01110', '1': '00100 01100 00100 00100 00100 00100 01110',
+        '2': '01110 10001 00001 00010 00100 01000 11111', '3': '11110 00001 00001 01110 00001 00001 11110',
+        '4': '00010 00110 01010 10010 11111 00010 00010', '5': '11111 10000 11110 00001 00001 10001 01110',
+        '6': '00110 01000 10000 11110 10001 10001 01110', '7': '11111 00001 00010 00100 01000 01000 01000',
+        '8': '01110 10001 10001 01110 10001 10001 01110', '9': '01110 10001 10001 01111 00001 00010 01100',
+        '.': '00000 00000 00000 00000 00000 00100 00100', ',': '00000 00000 00000 00000 00100 00100 01000',
+        ':': '00000 00100 00100 00000 00100 00100 00000', '/': '00001 00001 00010 00100 01000 10000 10000',
+        '%': '10001 10010 00010 00100 01000 01001 10001', '-': '00000 00000 00000 11111 00000 00000 00000',
+        '+': '00000 00100 00100 11111 00100 00100 00000', '!': '00100 00100 00100 00100 00100 00000 00100'
+    };
+
+    // Builds one sprite per glyph. scale is the size of one glyph cell in pixels. The glyph color runs from topColor
+    // to bottomColor, and each glyph casts a one-pixel shadow down and to the right.
+    function createFont(scale, topColor, bottomColor, shadowColor) {
+        const shadowIndex = nearestPaletteIndex(shadowColor[0], shadowColor[1], shadowColor[2]);
+        const font = new Map();
+        font.set(' ', { width: 1, height: 1, pixels: new Uint8Array(1), advance: SPACE_ADVANCE * scale });
+        for (const character of Object.keys(GLYPHS)) {
+            const bits = GLYPHS[character].replace(/ /g, '');
+            const litCell = (column, row) => (column < GLYPH_COLUMNS && bits[row * GLYPH_COLUMNS + column] === '1')
+                || (column > 0 && bits[row * GLYPH_COLUMNS + column - 1] === '1');
+            let firstColumn = GLYPH_COLUMNS;
+            let lastColumn = 0;
+            for (let row = 0; row < GLYPH_ROWS; row++) {
+                for (let column = 0; column <= GLYPH_COLUMNS; column++) {
+                    if (litCell(column, row)) {
+                        firstColumn = Math.min(firstColumn, column);
+                        lastColumn = Math.max(lastColumn, column);
+                    }
+                }
+            }
+            const bodyWidth = (lastColumn - firstColumn + 1) * scale;
+            const bodyHeight = GLYPH_ROWS * scale;
+            const width = bodyWidth + 1;
+            const height = bodyHeight + 1;
+            const pixels = new Uint8Array(width * height);
+            for (let pixelRow = 0; pixelRow < bodyHeight; pixelRow++) {
+                const blend = pixelRow / (bodyHeight - 1);
+                const colorIndex = nearestPaletteIndex(
+                    Math.round(topColor[0] + (bottomColor[0] - topColor[0]) * blend),
+                    Math.round(topColor[1] + (bottomColor[1] - topColor[1]) * blend),
+                    Math.round(topColor[2] + (bottomColor[2] - topColor[2]) * blend));
+                for (let pixelColumn = 0; pixelColumn < bodyWidth; pixelColumn++) {
+                    if (!litCell(firstColumn + Math.floor(pixelColumn / scale), Math.floor(pixelRow / scale))) { continue; }
+                    pixels[pixelRow * width + pixelColumn] = colorIndex;
+                    const shadowPixel = (pixelRow + 1) * width + pixelColumn + 1;
+                    if (pixels[shadowPixel] === TRANSPARENT_INDEX) { pixels[shadowPixel] = shadowIndex; }
+                }
+            }
+            font.set(character, { width: width, height: height, pixels: pixels, advance: bodyWidth + scale });
+        }
+        return font;
+    }
+
+    const TINY_GLYPH_WIDTH = 3;
+    const TINY_GLYPH_ADVANCE = 4;
+    // The 3 by 5 glyphs of the small numbers and ammunition labels on the status bar.
+    const TINY_GLYPHS = {
+        '0': '111101101101111', '1': '010110010010111', '2': '111001111100111', '3': '111001111001111', '4': '101101111001001',
+        '5': '111100111001111', '6': '111100111101111', '7': '111001001001001', '8': '111101111101111', '9': '111101111001111',
+        'B': '110101110101110', 'U': '101101101101111', 'L': '100100100100111', 'S': '111100111001111', 'H': '101101111101101',
+        'E': '111100110100111', 'R': '110101110101101', 'C': '111100100100111', 'K': '101101110101101', 'T': '111010010010010',
+        '/': '001001010100100'
+    };
+
+    // Calls plot(column, row) for each lit pixel of text drawn in the tiny font, with its left edge at leftColumn.
+    function plotTinyText(plot, text, leftColumn, topRow) {
+        let left = leftColumn;
+        for (const character of text) {
+            const bits = TINY_GLYPHS[character];
+            if (bits === undefined) { throw new Error('The tiny font has no glyph for "' + character + '".'); }
+            for (let bitIndex = 0; bitIndex < bits.length; bitIndex++) {
+                if (bits[bitIndex] === '1') {
+                    plot(left + (bitIndex % TINY_GLYPH_WIDTH), topRow + Math.floor(bitIndex / TINY_GLYPH_WIDTH));
+                }
+            }
+            left += TINY_GLYPH_ADVANCE;
+        }
+    }
+
+    function plotTinyTextRight(plot, text, rightColumn, topRow) {
+        plotTinyText(plot, text, rightColumn - text.length * TINY_GLYPH_ADVANCE + 1, topRow);
+    }
+
+    function statusBarPlotter(color) {
+        const packed = shadedColors[nearestPaletteIndex(color[0], color[1], color[2])];
+        return (column, row) => { framePixels[(VIEW_HEIGHT + row) * SCREEN_WIDTH + column] = packed; };
+    }
+
+    const AMMO_LIST_ROWS = [['BULL', MAX_AMMO], ['SHEL', 50], ['RCKT', 50], ['CELL', 300]];
+    const AMMO_LIST_TOP = 5;
+    const AMMO_LIST_ROW_HEIGHT = 6;
+    const AMMO_LIST_LABEL_LEFT = 254;
+    const AMMO_LIST_COUNT_RIGHT = 288;
+    const AMMO_LIST_SLASH_LEFT = 293;
+    const AMMO_LIST_MAX_RIGHT = 314;
+    const ARMS_LEFT = 111;
+    const ARMS_TOP = 4;
+    const ARMS_COLUMN_SPACING = 12;
+    const ARMS_ROW_SPACING = 10;
+    const STATUS_LABELS = [['AMMO', 24], ['HEALTH', 76], ['ARMS', 124], ['ARMOR', 207]];
+    const STATUS_LABEL_TOP = 23;
+    const STATUS_YELLOW = [255, 255, 71];
+    const STATUS_GREY = [163, 163, 163];
+    const STATUS_DIM_GREY = [99, 99, 99];
+
+    // STBAR: mottled dark grey metal divided into panels, with a black recess for the face and small recessed boxes.
+    function paintStatusBar(context) {
+        const DIVIDERS = [48, 104, 143, 178, 236, 249];
+        paintMottled(context, SCREEN_WIDTH, STATUS_BAR_HEIGHT, '#535353', ['#474747', '#5b5b5b', '#434343', '#636363'], 160);
+        paintStreaks(context, 0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT, 0.22);
+        fillBox(context, '#7b7b7b', 0, 0, SCREEN_WIDTH, 1);
+        fillBox(context, '#2f2f2f', 0, STATUS_BAR_HEIGHT - 1, SCREEN_WIDTH, 1);
+        for (const dividerLeft of DIVIDERS) {
+            fillBox(context, '#1b1b1b', dividerLeft - 1, 1, 1, STATUS_BAR_HEIGHT - 1);
+            fillBox(context, '#737373', dividerLeft, 1, 1, STATUS_BAR_HEIGHT - 1);
+        }
+        fillBox(context, '#000000', 144, 1, 33, STATUS_BAR_HEIGHT - 1);
+        const paintRecess = (left, top, width, height) => {
+            fillBox(context, '#1f1f1f', left, top, width, height);
+            fillBox(context, '#474747', left + 1, top + 1, width - 1, height - 1);
+            fillBox(context, '#6b6b6b', left + width, top + 1, 1, height);
+            fillBox(context, '#6b6b6b', left + 1, top + height, width, 1);
+        };
+        for (let slot = 0; slot < 6; slot++) {
+            paintRecess(ARMS_LEFT - 3 + (slot % 3) * ARMS_COLUMN_SPACING, ARMS_TOP - 2 + Math.floor(slot / 3) * ARMS_ROW_SPACING, 9, 8);
+        }
+        for (let keySlot = 0; keySlot < 3; keySlot++) {
+            paintRecess(239, 3 + keySlot * 10, 7, 6);
+        }
+    }
+
+    // Composes the status bar once: the painted metal, the engraved labels, and the numbers that never change.
+    function createStatusBar() {
+        const metal = rasterize(SCREEN_WIDTH, STATUS_BAR_HEIGHT, 6, paintStatusBar);
+        const barStart = VIEW_HEIGHT * SCREEN_WIDTH;
+        for (let pixelIndex = 0; pixelIndex < metal.pixels.length; pixelIndex++) {
+            framePixels[barStart + pixelIndex] = shadedColors[metal.pixels[pixelIndex]];
+        }
+        const labelFont = createFont(1, [179, 179, 179], [119, 119, 119], [19, 19, 19]);
+        for (const label of STATUS_LABELS) {
+            drawText(labelFont, label[0], label[1] - Math.round(textWidth(labelFont, label[0]) / 2), VIEW_HEIGHT + STATUS_LABEL_TOP);
+        }
+        for (let weaponNumber = 2; weaponNumber <= 7; weaponNumber++) {
+            const slot = weaponNumber - 2;
+            plotTinyText(statusBarPlotter(weaponNumber === 2 ? STATUS_YELLOW : STATUS_DIM_GREY), String(weaponNumber),
+                ARMS_LEFT + (slot % 3) * ARMS_COLUMN_SPACING, ARMS_TOP + Math.floor(slot / 3) * ARMS_ROW_SPACING);
+        }
+        AMMO_LIST_ROWS.forEach((ammoRow, rowIndex) => {
+            const rowTop = AMMO_LIST_TOP + rowIndex * AMMO_LIST_ROW_HEIGHT;
+            plotTinyText(statusBarPlotter(STATUS_GREY), ammoRow[0], AMMO_LIST_LABEL_LEFT, rowTop);
+            plotTinyText(statusBarPlotter(STATUS_GREY), '/', AMMO_LIST_SLASH_LEFT, rowTop);
+            plotTinyTextRight(statusBarPlotter(STATUS_YELLOW), String(ammoRow[1]), AMMO_LIST_MAX_RIGHT, rowTop);
+            if (rowIndex > 0) { plotTinyTextRight(statusBarPlotter(STATUS_YELLOW), '0', AMMO_LIST_COUNT_RIGHT, rowTop); }
+        });
+        return framePixels.slice(barStart);
+    }
+
+    // ---------------------------------------------------------------- level definition
+
+    // door is null for a sector that is not a door, or { openHeight } for a door sector.
+    const NO_FEATURES = { door: null, damage: false, flicker: false, pegBottom: false, edgeTextures: {} };
+
+    function withFeatures(changes) {
+        return Object.assign({}, NO_FEATURES, changes);
+    }
+
+    function boxPoints(left, bottom, right, top) {
+        return [[left, bottom], [right, bottom], [right, top], [left, top]];
+    }
+
+    function sectorDefinition(name, points, floor, ceil, light, floorFlat, ceilFlat, wall, side, features) {
+        return { name: name, points: points, floor: floor, ceil: ceil, light: light, floorFlat: floorFlat, ceilFlat: ceilFlat, wall: wall, side: side, features: features };
+    }
+
+    function doorFeatures(frameHeight) {
+        return withFeatures({ door: { openHeight: frameHeight - DOOR_HEAD_CLEARANCE }, pegBottom: true });
+    }
+
+    // A door that crosses a wall running east to west: a frame sector on each side of a door sector.
+    function doorDefinitions(name, left, right, southY, southWall, northWall, light, frameHeight, doorTexture) {
+        return [
+            sectorDefinition(name + 'South', boxPoints(left, southY, right, southY + 16), 0, frameHeight, light, 'floorHex', 'ceilPlate', southWall, southWall, NO_FEATURES),
+            sectorDefinition(name, boxPoints(left, southY + 16, right, southY + 32), 0, 0, light, 'floorHex', 'ceilPlate', 'doorTrack', doorTexture, doorFeatures(frameHeight)),
+            sectorDefinition(name + 'North', boxPoints(left, southY + 32, right, southY + 48), 0, frameHeight, light, 'floorHex', 'ceilPlate', northWall, northWall, NO_FEATURES)
+        ];
+    }
+
+    const ZIGZAG_LEFT = [[400, 496], [400, 560], [256, 704], [256, 768], [448, 960], [448, 1008]];
+    const ZIGZAG_RIGHT = [[496, 496], [496, 560], [352, 704], [352, 768], [544, 960], [544, 1008]];
+    const NUKAGE_FEATURES = withFeatures({ damage: true });
+    const EXIT_SWITCH_TEXTURE = 'switchOff';
+
+    // Every polygon lists its points counter-clockwise, with x to the east and y to the north.
+    const SECTOR_DEFINITIONS = [
+        sectorDefinition('hall', [[0, 0], [640, 0], [640, 448], [224, 448], [224, 256], [0, 256]], 0, 144, 176, 'floorHex', 'ceilPlate', 'startan', 'startan', NO_FEATURES),
+        sectorDefinition('stepLow', boxPoints(192, 256, 224, 448), 16, 144, 176, 'tiles', 'ceilPlate', 'startan', 'step', NO_FEATURES),
+        sectorDefinition('stepHigh', boxPoints(160, 256, 192, 448), 32, 144, 176, 'tiles', 'ceilPlate', 'startan', 'step', NO_FEATURES),
+        sectorDefinition('platform', boxPoints(0, 256, 160, 448), 48, 144, 192, 'tiles', 'ceilPlate', 'startan', 'step', NO_FEATURES),
+        sectorDefinition('pillarWest', boxPoints(272, 176, 304, 208), 144, 144, 176, 'floorHex', 'ceilPlate', 'support', 'support', NO_FEATURES),
+        sectorDefinition('pillarEast', boxPoints(464, 176, 496, 208), 144, 144, 176, 'floorHex', 'ceilPlate', 'support', 'support', NO_FEATURES),
+        sectorDefinition('window', boxPoints(640, 128, 656, 320), 40, 104, 192, 'tiles', 'ceilPlate', 'startan', 'startan', NO_FEATURES),
+        sectorDefinition('courtyard', boxPoints(656, 0, 1040, 448), -8, 112, 240, 'rocks', SKY_FLAT, 'brown', 'brown', NO_FEATURES),
+        sectorDefinition('pond', [[784, 160], [848, 128], [912, 160], [944, 224], [912, 288], [848, 320], [784, 288], [752, 224]], -16, 112, 240, 'nukage', SKY_FLAT, 'brown', 'brown', NO_FEATURES)
+    ].concat(
+        doorDefinitions('hallDoor', 384, 512, 448, 'startan', 'brownGreen', 160, BIG_DOOR_FRAME_HEIGHT, 'bigDoor'),
+        [
+            sectorDefinition('walkway', ZIGZAG_RIGHT.concat(ZIGZAG_LEFT.slice().reverse()), 0, 160, 144, 'floorBrown', 'ceilPlate', 'brownGreen', 'brown', NO_FEATURES),
+            sectorDefinition('nukageWest', [[128, 496]].concat(ZIGZAG_LEFT, [[128, 1008]]), -16, 160, 160, 'nukage', 'ceilPlate', 'brownGreen', 'brown', NUKAGE_FEATURES),
+            sectorDefinition('nukageEast', [[672, 496], [672, 1008]].concat(ZIGZAG_RIGHT.slice().reverse()), -16, 160, 160, 'nukage', 'ceilPlate', 'brownGreen', 'brown', NUKAGE_FEATURES),
+            sectorDefinition('ledge', boxPoints(576, 864, 656, 992), 24, 160, 144, 'floorBrown', 'ceilPlate', 'brown', 'brown', NO_FEATURES)
+        ],
+        doorDefinitions('pitDoor', 464, 528, 1008, 'brownGreen', 'panel', 144, DOOR_FRAME_HEIGHT, 'door'),
+        [
+            sectorDefinition('computerRoom', boxPoints(272, 1056, 720, 1376), 0, 96, 144, 'blueFloor', 'redLights', 'panel', 'panel', withFeatures({ flicker: true, edgeTextures: { 2: 'computer', 3: 'computer' } })),
+            sectorDefinition('computerBlock', boxPoints(432, 1184, 560, 1264), 96, 96, 144, 'blueFloor', 'redLights', 'computer', 'computer', NO_FEATURES),
+            sectorDefinition('corridor', boxPoints(720, 1184, 848, 1248), 0, DOOR_FRAME_HEIGHT, 112, 'floorHex', 'ceilPlate', 'panel', 'panel', NO_FEATURES),
+            sectorDefinition('exitDoor', boxPoints(848, 1184, 864, 1248), 0, 0, 144, 'floorHex', 'ceilPlate', 'doorTrack', 'door', doorFeatures(DOOR_FRAME_HEIGHT)),
+            sectorDefinition('exitRoom', [[864, 1120], [1024, 1120], [1024, 1184], [1024, 1248], [1024, 1312], [864, 1312]], 0, DOOR_FRAME_HEIGHT, 208, 'floorHex', 'ceilPlate', 'startan', 'startan', withFeatures({ edgeTextures: { 2: EXIT_SWITCH_TEXTURE } }))
+        ]);
+
+    const PLAYER_START = { x: 320, y: 64, angleDegrees: 90 };
+
+    // Each spawn is [kind, x, y, facing angle in degrees].
+    const THING_SPAWNS = [
+        ['zombie', 560, 392, 0], ['zombie', 96, 176, 180],
+        ['clip', 384, 288, 0], ['stimpack', 600, 48, 0], ['armor', 80, 352, 0],
+        ['imp', 304, 736, 270], ['imp', 616, 928, 225], ['clip', 448, 540, 0], ['stimpack', 496, 990, 0],
+        ['zombie', 336, 1312, 270], ['zombie', 656, 1312, 270], ['imp', 640, 1120, 180], ['stimpack', 300, 1090, 0], ['clip', 690, 1340, 0],
+        ['imp', 944, 1272, 180], ['stimpack', 990, 1150, 0]
+    ];
+
+    const MONSTER_KINDS = {
+        zombie: {
+            health: 20, chaseTics: 4, painChance: 200, melee: false, dropsClip: true, sightSound: 'zombieSight', deathSound: 'zombieDeath',
+            attackSequence: [{ frame: 'aim', tics: 10, action: 'none' }, { frame: 'fire', tics: 8, action: 'shoot' }, { frame: 'aim', tics: 8, action: 'none' }]
+        },
+        imp: {
+            health: 60, chaseTics: 3, painChance: 200, melee: true, dropsClip: false, sightSound: 'impSight', deathSound: 'impDeath',
+            attackSequence: [{ frame: 'raise', tics: 8, action: 'none' }, { frame: 'raise', tics: 8, action: 'none' }, { frame: 'throw', tics: 6, action: 'impAttack' }]
+        }
+    };
+
+    // Each key also names the item's list of sprites. pickUp applies the item to the player and returns whether the player took it.
+    const ITEM_KINDS = {
+        stimpack: {
+            message: 'PICKED UP A STIMPACK.',
+            pickUp: () => {
+                if (player.health >= MAX_HEALTH) { return false; }
+                player.health = Math.min(MAX_HEALTH, player.health + STIMPACK_HEALTH);
+                return true;
+            }
+        },
+        clip: {
+            message: 'PICKED UP A CLIP.',
+            pickUp: (item) => {
+                if (player.ammo >= MAX_AMMO) { return false; }
+                player.ammo = Math.min(MAX_AMMO, player.ammo + item.clipAmount);
+                return true;
+            }
+        },
+        armor: {
+            message: 'PICKED UP THE ARMOR.',
+            pickUp: () => {
+                if (player.armor >= MAX_ARMOR) { return false; }
+                player.armor = MAX_ARMOR;
+                return true;
+            }
+        }
+    };
+    const ITEM_FRAME_TICS = 6;
+
+    // A damage roll is (a random whole number from 1 to sides) times multiplier.
+    const PISTOL_DAMAGE = { sides: 3, multiplier: 5 };
+    const ZOMBIE_SHOT_DAMAGE = { sides: 5, multiplier: 3 };
+    const IMP_DAMAGE = { sides: 8, multiplier: 3 };
+
+    const PISTOL_SEQUENCE = [{ frame: 0, tics: 4, fire: false }, { frame: 1, tics: 6, fire: true }, { frame: 2, tics: 4, fire: false }, { frame: 1, tics: 5, fire: false }];
+    const WEAPON_READY = -1;
+
+    // ---------------------------------------------------------------- program state
+
+    const screenCanvas = document.getElementById('screen');
+    const screenContext = screenCanvas.getContext('2d');
+    const frameImage = screenContext.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
+    const framePixels = new Uint32Array(frameImage.data.buffer);
+    const depthBuffer = new Float32Array(SCREEN_WIDTH * VIEW_HEIGHT);
+
+    const hitParams = new Float64Array(MAX_HITS);
+    const hitLineParams = new Float64Array(MAX_HITS);
+    const hitOnFront = new Uint8Array(MAX_HITS);
+    const hitLines = new Array(MAX_HITS);
+    let hitCount = 0;
+
+    let textures = null;
+    let sprites = null;
+    let messageFont = null;
+    let numberFont = null;
+    let statusBarColors = null;
+
+    let sectors = [];
+    let lines = [];
+    let doorSectors = [];
+    let things = [];
+    let player = null;
+    let weapon = null;
+    let mode = 'title';
+    let levelTic = 0;
+    let killCount = 0;
+    let monsterCount = 0;
+    let exitTics = 0;
+    let extraLight = 0;
+    let message = { text: '', tics: 0 };
+    let face = { lookIndex: 1, lookTics: 0, ouchTics: 0 };
+    let wipeOffsets = null;
+    let wipeOldPixels = null;
+    let viewX = 0;
+    let viewY = 0;
+    let viewZ = 0;
+
+    const heldKeys = new Set();
+    let useTapped = false;
+    let turnHeldTics = 0;
+
+    // ---------------------------------------------------------------- level geometry
+
+    function polygonArea(points) {
+        let doubledArea = 0;
+        for (let pointIndex = 0; pointIndex < points.length; pointIndex++) {
+            const current = points[pointIndex];
+            const next = points[(pointIndex + 1) % points.length];
+            doubledArea += current[0] * next[1] - next[0] * current[1];
+        }
+        return doubledArea / 2;
+    }
+
+    function pointInPolygon(pointX, pointY, points) {
+        let inside = false;
+        for (let pointIndex = 0, previousIndex = points.length - 1; pointIndex < points.length; previousIndex = pointIndex++) {
+            const current = points[pointIndex];
+            const previous = points[previousIndex];
+            if ((current[1] > pointY) !== (previous[1] > pointY)
+                && pointX < (previous[0] - current[0]) * (pointY - current[1]) / (previous[1] - current[1]) + current[0]) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    function textureNamed(textureName) {
+        const texture = textures[textureName];
+        if (texture === undefined) { throw new Error('The level names an unknown texture: ' + textureName); }
+        return texture;
+    }
+
+    function buildLevelGeometry() {
+        sectors = SECTOR_DEFINITIONS.map((definition) => {
+            const area = polygonArea(definition.points);
+            if (area <= 0) { throw new Error('Sector ' + definition.name + ' does not list its points counter-clockwise.'); }
+            let centerX = 0;
+            let centerY = 0;
+            for (const point of definition.points) {
+                centerX += point[0] / definition.points.length;
+                centerY += point[1] / definition.points.length;
+            }
+            return {
+                name: definition.name, points: definition.points, area: area, centerX: centerX, centerY: centerY,
+                floor: definition.floor, ceil: definition.ceil, light: definition.light, baseLight: definition.light,
+                floorFlat: textureNamed(definition.floorFlat),
+                ceilFlat: definition.ceilFlat === SKY_FLAT ? null : textureNamed(definition.ceilFlat),
+                side: textureNamed(definition.side),
+                damage: definition.features.damage, flicker: definition.features.flicker,
+                door: definition.features.door === null ? null : { state: 'closed', timer: 0, top: definition.floor + definition.features.door.openHeight },
+                lines: [], neighbors: []
+            };
+        });
+        doorSectors = sectors.filter((sector) => sector.door !== null);
+
+        const allPoints = [];
+        for (const definition of SECTOR_DEFINITIONS) {
+            for (const point of definition.points) { allPoints.push(point); }
+        }
+
+        // Split every polygon edge at each vertex of any sector that lies on the edge, so that shared edges match exactly.
+        const pieces = [];
+        const piecesByKey = new Map();
+        SECTOR_DEFINITIONS.forEach((definition, sectorIndex) => {
+            definition.points.forEach((start, edgeIndex) => {
+                const end = definition.points[(edgeIndex + 1) % definition.points.length];
+                const edgeX = end[0] - start[0];
+                const edgeY = end[1] - start[1];
+                const edgeLengthSquared = edgeX * edgeX + edgeY * edgeY;
+                const stops = new Map([[0, start], [edgeLengthSquared, end]]);
+                for (const point of allPoints) {
+                    const offsetX = point[0] - start[0];
+                    const offsetY = point[1] - start[1];
+                    if (offsetX * edgeY - offsetY * edgeX !== 0) { continue; }
+                    const along = offsetX * edgeX + offsetY * edgeY;
+                    if (along > 0 && along < edgeLengthSquared) { stops.set(along, point); }
+                }
+                const ordered = Array.from(stops.keys()).sort((first, second) => first - second);
+                const textureName = edgeIndex in definition.features.edgeTextures ? definition.features.edgeTextures[edgeIndex] : definition.wall;
+                for (let stopIndex = 0; stopIndex + 1 < ordered.length; stopIndex++) {
+                    const pieceStart = stops.get(ordered[stopIndex]);
+                    const pieceEnd = stops.get(ordered[stopIndex + 1]);
+                    const piece = {
+                        startX: pieceStart[0], startY: pieceStart[1], endX: pieceEnd[0], endY: pieceEnd[1],
+                        sector: sectors[sectorIndex], textureName: textureName, pegBottom: definition.features.pegBottom,
+                        // Wall textures run left to right for a viewer inside the sector, which is from the end of the edge to its start.
+                        textureOffset: (edgeLengthSquared - ordered[stopIndex + 1]) / Math.sqrt(edgeLengthSquared), used: false
+                    };
+                    const key = piece.startX + ',' + piece.startY + ',' + piece.endX + ',' + piece.endY;
+                    if (piecesByKey.has(key)) { throw new Error('Sectors ' + piecesByKey.get(key).sector.name + ' and ' + definition.name + ' overlap along edge ' + key + '.'); }
+                    piecesByKey.set(key, piece);
+                    pieces.push(piece);
+                }
+            });
+        });
+
+        lines = [];
+        for (const piece of pieces) {
+            if (piece.used) { continue; }
+            piece.used = true;
+            const deltaX = piece.endX - piece.startX;
+            const deltaY = piece.endY - piece.startY;
+            const length = Math.hypot(deltaX, deltaY);
+            let back = null;
+            const reverse = piecesByKey.get(piece.endX + ',' + piece.endY + ',' + piece.startX + ',' + piece.startY);
+            if (reverse !== undefined) {
+                reverse.used = true;
+                back = reverse.sector;
+            } else {
+                // An edge without a partner is either a solid wall or the outline of a sector that lies inside another sector.
+                const outsideX = (piece.startX + piece.endX) / 2 + deltaY / length;
+                const outsideY = (piece.startY + piece.endY) / 2 - deltaX / length;
+                for (const candidate of sectors) {
+                    if (candidate !== piece.sector && pointInPolygon(outsideX, outsideY, candidate.points) && (back === null || candidate.area < back.area)) {
+                        back = candidate;
+                    }
+                }
+            }
+            const line = {
+                ax: piece.startX, ay: piece.startY, dx: deltaX, dy: deltaY, length: length,
+                front: piece.sector, back: back,
+                middle: back === null ? textureNamed(piece.textureName) : null,
+                textureOffset: piece.textureOffset, pegBottom: piece.pegBottom,
+                contrast: deltaY === 0 ? -1 : deltaX === 0 ? 1 : 0,
+                exitSwitch: back === null && piece.textureName === EXIT_SWITCH_TEXTURE
+            };
+            lines.push(line);
+            line.front.lines.push(line);
+            if (back !== null) {
+                back.lines.push(line);
+                line.front.neighbors.push({ sector: back, line: line });
+                back.neighbors.push({ sector: line.front, line: line });
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- ray and geometry queries
+
+    // Finds every line that a ray crosses and stores the crossings sorted by distance in the hit arrays.
+    function collectHits(originX, originY, directionX, directionY) {
+        hitCount = 0;
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
+            const denominator = directionX * line.dy - directionY * line.dx;
+            if (denominator === 0) { continue; }
+            const relativeX = line.ax - originX;
+            const relativeY = line.ay - originY;
+            const sideValue = relativeX * line.dy - relativeY * line.dx;
+            const rayParam = sideValue / denominator;
+            if (rayParam <= MIN_RAY_PARAM) { continue; }
+            const lineParam = (relativeX * directionY - relativeY * directionX) / denominator;
+            if (lineParam < 0 || lineParam > 1) { continue; }
+            if (hitCount === MAX_HITS) { throw new Error('A ray crossed more than ' + MAX_HITS + ' lines.'); }
+            let slot = hitCount;
+            while (slot > 0 && hitParams[slot - 1] > rayParam) {
+                hitParams[slot] = hitParams[slot - 1];
+                hitLineParams[slot] = hitLineParams[slot - 1];
+                hitOnFront[slot] = hitOnFront[slot - 1];
+                hitLines[slot] = hitLines[slot - 1];
+                slot--;
+            }
+            hitParams[slot] = rayParam;
+            hitLineParams[slot] = lineParam;
+            hitOnFront[slot] = sideValue > 0 ? 1 : 0;
+            hitLines[slot] = line;
+            hitCount++;
+        }
+    }
+
+    const PROBE_DIRECTION_X = Math.cos(0.7);
+    const PROBE_DIRECTION_Y = Math.sin(0.7);
+
+    // Returns the sector that contains a point, or null for a point outside the level.
+    function sectorAt(pointX, pointY) {
+        let nearestParam = Infinity;
+        let nearestSector = null;
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
+            const denominator = PROBE_DIRECTION_X * line.dy - PROBE_DIRECTION_Y * line.dx;
+            if (denominator === 0) { continue; }
+            const relativeX = line.ax - pointX;
+            const relativeY = line.ay - pointY;
+            const sideValue = relativeX * line.dy - relativeY * line.dx;
+            const rayParam = sideValue / denominator;
+            if (rayParam <= 0 || rayParam >= nearestParam) { continue; }
+            const lineParam = (relativeX * PROBE_DIRECTION_Y - relativeY * PROBE_DIRECTION_X) / denominator;
+            if (lineParam < 0 || lineParam > 1) { continue; }
+            nearestParam = rayParam;
+            nearestSector = sideValue > 0 ? line.front : line.back;
+        }
+        return nearestSector;
+    }
+
+    function distanceToLine(pointX, pointY, line) {
+        const along = clamp(((pointX - line.ax) * line.dx + (pointY - line.ay) * line.dy) / (line.length * line.length), 0, 1);
+        return Math.hypot(pointX - (line.ax + line.dx * along), pointY - (line.ay + line.dy * along));
+    }
+
+    // The opening of a two-sided line spans from openingBottom(line) up to openingTop(line).
+    function openingTop(line) { return Math.min(line.front.ceil, line.back.ceil); }
+    function openingBottom(line) { return Math.max(line.front.floor, line.back.floor); }
+
+    // Calls visit(line, fraction) for each line that the segment crosses. Stops and returns true when visit returns true.
+    function someCrossedLine(fromX, fromY, toX, toY, visit) {
+        const deltaX = toX - fromX;
+        const deltaY = toY - fromY;
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
+            const denominator = deltaX * line.dy - deltaY * line.dx;
+            if (denominator === 0) { continue; }
+            const relativeX = line.ax - fromX;
+            const relativeY = line.ay - fromY;
+            const fraction = (relativeX * line.dy - relativeY * line.dx) / denominator;
+            if (fraction <= 0 || fraction >= 1) { continue; }
+            const lineParam = (relativeX * deltaY - relativeY * deltaX) / denominator;
+            if (lineParam < 0 || lineParam > 1) { continue; }
+            if (visit(line, fraction)) { return true; }
+        }
+        return false;
+    }
+
+    function canSee(fromX, fromY, fromZ, target) {
+        const distance = Math.hypot(target.x - fromX, target.y - fromY);
+        if (distance === 0) { return true; }
+        let topSlope = (target.z + target.height - fromZ) / distance;
+        let bottomSlope = (target.z - fromZ) / distance;
+        return !someCrossedLine(fromX, fromY, target.x, target.y, (line, fraction) => {
+            if (line.back === null) { return true; }
+            const openTop = openingTop(line);
+            const openBottom = openingBottom(line);
+            if (openTop <= openBottom) { return true; }
+            const crossDistance = fraction * distance;
+            if (line.front.floor !== line.back.floor) { bottomSlope = Math.max(bottomSlope, (openBottom - fromZ) / crossDistance); }
+            if (line.front.ceil !== line.back.ceil) { topSlope = Math.min(topSlope, (openTop - fromZ) / crossDistance); }
+            return topSlope <= bottomSlope;
+        });
+    }
+
+    // ---------------------------------------------------------------- movement
+
+    function overlapsThing(thing, other, targetX, targetY) {
+        const reach = thing.radius + other.radius;
+        if (Math.abs(targetX - other.x) >= reach || Math.abs(targetY - other.y) >= reach) { return false; }
+        return !(Math.abs(thing.x - other.x) < reach && Math.abs(thing.y - other.y) < reach);
+    }
+
+    function checkPosition(thing, targetX, targetY) {
+        const result = { blocked: false, blockingLine: null, floorZ: 0, ceilZ: 0, sector: sectorAt(targetX, targetY) };
+        if (result.sector === null) {
+            result.blocked = true;
+            return result;
+        }
+        result.floorZ = result.sector.floor;
+        result.ceilZ = result.sector.ceil;
+        let nearestBlockDistance = Infinity;
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const line = lines[lineIndex];
+            const distance = distanceToLine(targetX, targetY, line);
+            if (distance >= thing.radius) { continue; }
+            let lineBlocks = line.back === null;
+            if (!lineBlocks) {
+                const openTop = openingTop(line);
+                const openBottom = openingBottom(line);
+                const lowFloor = Math.min(line.front.floor, line.back.floor);
+                lineBlocks = openTop - openBottom < thing.height
+                    || openBottom - thing.z > MAX_STEP_HEIGHT
+                    || openTop - thing.z < thing.height
+                    || openBottom - lowFloor > thing.maxDropHeight;
+                if (!lineBlocks) {
+                    result.floorZ = Math.max(result.floorZ, openBottom);
+                    result.ceilZ = Math.min(result.ceilZ, openTop);
+                }
+            }
+            if (lineBlocks && distance < nearestBlockDistance) {
+                nearestBlockDistance = distance;
+                result.blocked = true;
+                result.blockingLine = line;
+            }
+        }
+        if (result.floorZ - thing.z > MAX_STEP_HEIGHT || result.ceilZ - result.floorZ < thing.height) { result.blocked = true; }
+        for (const other of things) {
+            if (other !== thing && other.solid && overlapsThing(thing, other, targetX, targetY)) { result.blocked = true; }
+        }
+        if (thing !== player && !player.dead && overlapsThing(thing, player, targetX, targetY)) { result.blocked = true; }
+        return result;
+    }
+
+    function tryMove(thing, targetX, targetY) {
+        const result = checkPosition(thing, targetX, targetY);
+        if (!result.blocked) {
+            thing.x = targetX;
+            thing.y = targetY;
+            thing.sector = result.sector;
+            thing.floorZ = result.floorZ;
+            thing.ceilZ = result.ceilZ;
+        }
+        return result;
+    }
+
+    function slideMove(thing) {
+        const moveX = thing.momentumX;
+        const moveY = thing.momentumY;
+        const result = tryMove(thing, thing.x + moveX, thing.y + moveY);
+        if (!result.blocked) { return; }
+        if (result.blockingLine !== null) {
+            const line = result.blockingLine;
+            const along = (moveX * line.dx + moveY * line.dy) / (line.length * line.length);
+            const slideX = line.dx * along;
+            const slideY = line.dy * along;
+            if (!tryMove(thing, thing.x + slideX, thing.y + slideY).blocked) {
+                thing.momentumX = slideX;
+                thing.momentumY = slideY;
+                return;
+            }
+        }
+        if (!tryMove(thing, thing.x + moveX, thing.y).blocked) {
+            thing.momentumY = 0;
+            return;
+        }
+        if (!tryMove(thing, thing.x, thing.y + moveY).blocked) {
+            thing.momentumX = 0;
+            return;
+        }
+        thing.momentumX = 0;
+        thing.momentumY = 0;
+    }
+
+    // ---------------------------------------------------------------- sound synthesis
+
+    const SOUND_FRAME_HOP = 256;
+    const SOUND_WINDOW = 256;
+    const SOUND_SYNTHESIS_HOP = 64;
+    const SOUND_BAND_EDGES = [0, 120, 240, 400, 600, 850, 1150, 1550, 2050, 2700, 3500, 4400, 5512.5];
+    const SOUND_BAND_COUNT = SOUND_BAND_EDGES.length - 1;
+    const SOUND_LEVEL_RANGE_DECIBELS = 70;
+    const SOUND_LEVEL_STEP_DECIBELS = 2;
+    const SOUND_PITCH_STEP_HERTZ = 10;
+    const SOUND_TONE_STEP_HERTZ = 5;
+    const SOUND_TONE_DIGITS = 2;
+    const SOUND_DIGIT_BASE = 36;
+    const SOUND_VOICE_NOISE_SHARE = 0.3;
+    const SOUND_TONE_NOISE_SHARE = 0.5;
+    const SOUND_PITCH_JITTER = 0.15;
+    const SOUND_GLIDE = 0.01;
+    const SOUND_PULSE_SOFTENING = 0.55;
+    const SOUND_SAMPLE_STEPS = 127;
+
+    // Each sound is synthesized from noise, a pulse train, and a sine tone, shaped in time and frequency by numbers
+    // that were measured from the Doom sound effect that the comment names. A frame is SOUND_FRAME_HOP samples (23 ms).
+    // pitch holds one base-36 digit per frame: 0 for a frame without a voice, otherwise the voice's pitch in units of
+    // SOUND_PITCH_STEP_HERTZ. tone holds SOUND_TONE_DIGITS base-36 digits per frame: 0 for a frame without a whine,
+    // otherwise the whine's frequency in units of SOUND_TONE_STEP_HERTZ. levels holds SOUND_BAND_COUNT base-36 digits
+    // per frame: the level of each frequency band of SOUND_BAND_EDGES in steps of SOUND_LEVEL_STEP_DECIBELS, where z is
+    // the loudest and 0 is silence.
+    const SOUND_DEFINITIONS = {
+        // DSPISTOL
+        pistol: {
+            pitch: '0000000000000000000000',
+            tone: '00000000000000000000000000000000000000000000',
+            levels: 'yzywwuwuusssuvywyvxxxvuutxzvwttvvtutvxvvursuurtrsxwvspttrqrqoxyvvssrsnqpqwwvqrrrpnnoovsstrutrppmqywxsttropplqtsqqqrqnolj'
+                + 'tvtnrpokijgfqvsosonkjgefpstpqnnjggefqyxmqmliggefpuunnpoifgeepurmmiigfeeeospkljkgefdepoplmmmlffedorpjjkhgefddoonhjhjgeecd'
+                + 'nmgfeffeddcelfcdefedecce'
+        },
+        // DSDOROPN
+        doorOpen: {
+            pitch: '000000000000000000000000000000000000000000000000000000',
+            tone: '00000000000000000000000000000000000000009t9m9i9c97978p8l8f0000000000000000000000005r5q5d00000000000000000000',
+            levels: 'nrmjjheffeeersuumijfijhjotrtkhgfjhhfstwnkmpopnmnsszsnkmkjhgfrpvskmnmmkjiqtvrnmplmkiilrtrojpkiiijqvvsnlmjkklmnuvqnlnljjij'
+                + 'ntullpmijljkpmsnpsmlkklkqqnnnumkllkkmnqiisnikkkjnqrmlqkkmlkknntngmlmmmmmmmrljnlnkmljonjkhomlllllonrkknlomlkiqppngololmml'
+                + 'mkokjpjrlmiimnpjkpnulmmkmmlniklwoolkklmmjoowmmmkkmmlinpwonnjjjonjmpsnnlilpkmkmqvjmiimlnkkmrtlqjkjlnnjlsplmjjlklmimsmnmji'
+                + 'kmonintlnmiinlrmloummlkjpsqpnmqlkmjjmsrmimrikjihoqqlmorlnmkipqnomrqjljlioqqmmmrhjhhgrtokkptijhigpqqjprslpkkirssmnspjllkk'
+                + 'otqimrjhljgersqimuhijjifquolmtkmmiiipummkrkjkkghqsnposmljjijsqqprsnnmkjinrmnrrkklhfgorjnuqmlnlhinnnkrolkllihlmmlsqljmjfd'
+                + 'opmgtnkimjigknmlrmljolhimplmsmllmkffmqlmqoooonkk'
+        },
+        // DSDORCLS
+        doorClose: {
+            pitch: '000000qqqwwwwwwliiwwwww000vuu00000000konuttss0007777000',
+            tone: '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+            levels: 'ospxtqrroolmstqusqtoppkmpqpqtrpsqpmlqqrpurqqrnnnrtpvtotqonnntspvtpropnmlqsrupoxopnllqrpqtqwpppmpmsrnrrxppnlnoronoryppolm'
+                + 'nmokmpzqnpllopooorwomnnmoosnpszoqpmnlpsmpsyppsmmlprnntxopqnonpqmprvqqqmnnoqnmsqprqnnopnnosrprpnmnmslnowpqnmnjmvnrruoqpnn'
+                + 'loumsqxnpommlmokmnvmpllmlnumopupqolmkpvmkqvmpnnmlkslmstoqmlklkomnstjolmklmrllowkmkkjmmmjltvjnlmlollkkrtnqmkmmlurnrslommo'
+                + 'lntqpqtmnmlloopmjvvlmmkjkjmnnsqoonkjmlrrowpnmqkkmkonputoopmlmmmopvtoponlompjqwsqopmjojonowuooqnlnmnlnuqqnpnlnkoonwsnmqnl'
+                + 'mfmkmuoknrpkoknmrursqrpnmqpmrxqrrqpokmnouvpoqpnllllmupplonmknokmonsoroonnopisjrkomonutokljolmqurwuklhjhjntptyunkmmkmousu'
+                + 'yrkjjjkkkqpswtmmmlnmorqrnpomnmpqppssoqkmjimlmmoq667779a98dc7'
+        },
+        // DSSWTCHN
+        switch: {
+            pitch: '0000000000066666000000000',
+            tone: '00000000000000000000000000000000000000000000000000',
+            levels: 'mimmkmqlnmmkpwtqsqqswxqtstzutnpqttrptvxxsnmrtronttyvqnmorpnmquuwnlmnqnnmopttomlntpmmruvolmlosnmlsrrppoonromkvwpoqpomqmki'
+                + 'tvsqnnlmplkistppknlnqmkivvroolmmoljirtnnmmimomkhtsroljklmljgsqtnlllkmkihppqojjkljkigsspjlkjjkiggponkljjhmiifrpoljijhjhhf'
+                + 'tprmlhiikiefoopmiiiikhgepornjhhhhgfeklmjjiggigedafjdgebccab9'
+        },
+        // DSITEMUP
+        pickup: {
+            pitch: 'kkkkkk00k',
+            tone: '000000000000000000',
+            levels: 'wzsvyxtqnmnnwzsvyxtpmnpowzsvyxtpnmnnwzsvyxtpnmonwysvyxtpnmnn666654442222000000000000wzwvyytqoknnxytwyxtqomno'
+        },
+        // DSPLPAIN
+        playerPain: {
+            pitch: '0000000000000000tsxuyt00000000www0000000000000stss0000000000',
+            tone: '000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+            levels: 'pdokrnrvtkihpmrtsqwzxmilptswwswyxpmmpsuxxrryvonlqurwrrvxtnllsxxwxtvxuqppsyvxxuwyxsttuwuusqvywtsutzvuwusvvtttuywvutuyuqqr'
+                + 'vztuuvuyuqrtwwtrtrtxsqpprtqqtrtvtqppqmmqsrpwspoprjnoppoqqnmoohkiikknljijpfikjhhliihhofjljhhjhiihrgggfffjiiikohiijkikihhh'
+                + 'qfifhjlkhjhiqcjjgillkkhipehjkkmnllijphjlkknqlmjjpgikmlnplliipgikjmolmliipjgfiloomkiipjgiimopmjijpihjijmmjihjpiijkkjphgjj'
+                + 'qikghihlghihqjhjkhhjghggpehikjiliiiioeimomjqnjjkpjjprqrvqmlmpmlpurtwuqnoqlnoustxrroqqkmjvquvtspopmnruqtwsqpppimstqsvrqpp'
+                + 'pmmrrnsurpppqklqrpqtpqoopimqpnpspnoophprnnounnmophknlmqploompknolklolllkohklijklkjjindikiijjhhhgsa99badcdcdepgfjhgllhjij'
+                + 'qfkmjhmkiijkphmnjlnnklllpkknoloolommpfmqlmnpnonnpjmpmjnpnpmmpgmpljnooomophhrnlmompmmphhokijomnllohjolklmjmjl222111000000'
+        },
+        // DSPLDETH
+        playerDeath: {
+            pitch: '0000000000000000000000000000000000000000000',
+            tone: '0000000000000000000000000000000000000000000069655w000000000000000000000000000000000000',
+            levels: 'mgqpvuusnjiinfkurzvtqkjjmmqttwxuroonniktvwxusnkjoqrruvwuroljmnnuuxwvtqnmohlssywutomlsqrsvxwvupmknmmsrxwutponolntrxwutoki'
+                + 'ollrqxwutolkoqsstywsrpnnqmntszvttqnkplnqrzvtsplhojmrsxwusokipilpswxvuqnjpflqtwzvtrnkpkmqtuwvtpmkonortwxvunmjqkmqqwxusomj'
+                + 'qeonsyyvspmkqhnpqwutrnmjpimrrywwuqnkpfippyvvtpmjqenprxxwuqmjpooqrxvttpmjpkooruvttqnjpmlnsuutsqljphpnqwutsoljpgnrsuvtsnli'
+                + 'pnoprtuurqmjpmlnqturspmipkloqtttrqnjolqnruutsqnjpipnqtttrrmhpmooqtuutqmjplqqpvtutqnkpqpqsrstrqokomnnrrqusqmjpjonqrrtronj'
+                + 'plnpqtsrqomisqqrssrsqnlinhjjklkmljhh'
+        },
+        // DSOOF
+        oof: {
+            pitch: 'eeesqpnligecbba0',
+            tone: '00000000000000000000000000000000',
+            levels: 'pmqnnlqplligpnqonmrqlljgpmrooprrkmkgpouprqsollliquyqtqtsnnllpyzpqrtpnpmkpzxqnprplnnlrytopmqljnkkpypnmmnjjkjksxokljliijgj'
+                + 'twjjjjjjhhghstjiihjhfffgrqighfheeddfqngfhgeebddcplhecadbbbde876554354423'
+        },
+        // DSPOSIT1
+        zombieSight: {
+            pitch: '000000000000000000000',
+            tone: '000000000000000000000000000000000000000000',
+            levels: 'mnlihhgighkkpsoqponknklnsutpsrpppoopovumurpoppnqtttmutonppmovzrvwspopromrwrzvtpqsrqqqvxyvsqqqqsprwvwxrqpoqqqpwvyytssrrrp'
+                + 'quxzvtqsnpqppvxxtwsssqpppvxxuxrutrppoyzvtursqosooyvtuuqrpmomptssupmopmnonxutsmnnmlmlqrrrnilnilmksqpnkhikhhjiqmjljihiefgg'
+                + 'omgjhghgeefg'
+        },
+        // DSPOPAIN
+        monsterPain: {
+            pitch: 'oppppppccc00fff00tsst0000000000000',
+            tone: '00000000000000000000000000000000000000000000000000000000000000000000',
+            levels: 'eimzuspoljkjeglzvspnjjjkffjyvrqlljikahkzusokkihjffkzvrrmkjjkedizvromkhijjikyvqnlkihjfbjzvqnmkihjgclyvqmljihjgcjwvoolhghi'
+                + 'ghozuqnnljjjjjrvsqpomkkgggsuvqpqpmmightttqpsnlnhghtuurqrpnlhgiuuvrrqommicjuvupqronmhfkustoornmmgdkussnprpnmfbjtvtonsomnh'
+                + 'ajtttrpronnhbjstvsnqomljensxvrrqolmjektwuqoqnmmiajsvvsqqnllj8jtvwsqqommjdlsyuqqrmkmjdistxrornmmjclqwwspokjjjbjststqqnmli'
+                + 'ckssvupqnmmkemqwwspokjkkdmqzwqpnkjjknqqxvsookkjl'
+        },
+        // DSPODTH1
+        zombieDeath: {
+            pitch: 'mmmkkkkkkkjjjjjkkkkkkkjjjjjjjiiiygwffeddddddde00igi',
+            tone: '000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+            levels: 'lgknqmfkgheflhjopogjfhdglikpppilghegmiporoiljgegljrqqoiliidfljrrspilijegllsssqjmjkehmmtsrqkmkjefmmtsqskojjeflmusrrkpkkef'
+                + 'lluqprnojjfgmkvrqomnllehmkvrrropmlffmmwsssnpmlfimnusutnqliehmmtrtunqliffmmututlomjggmmtsutloliefmmttvslqljehnnvvwtmpmkef'
+                + 'novuwtmqmkffnoxutsnqljffnnvstslsnlffnnwtspnrnkefmnxtvpnrokeflmusvmlrnjffmnuswpjpmieemnurxtjpmiegnnvsytipnhfdnovrytgpnife'
+                + 'nlwrzrfoniefnkvqvqgonifenlwqvqholidenmwqunhmmiefnmwproemkgeenjwpsniilidgmktpuphkkgdemjrqrqfjkgeemlqpqnfjifdemkqornjihfde'
+                + 'mjpnrmhggedeljomqmfggeefljpmqlcfddegliokomffeedelmqlnojhedeelmtlrogfgeeglmnimhbddeeelihgkfddcdddljgehicbcdcclfkffeccbcbb'
+                + 'jdeegabbbb9a'
+        },
+        // DSBGSIT1
+        impSight: {
+            pitch: '000000000000000000000000000000000000000000000000000000',
+            tone: '000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+            levels: 'nkhejjeghhhholgegiegikllnnmdnijfeijlnoofoijggiihlnmhokkjffhimmlgppkmlijkklhhnoqqommlpnlhpppqopnkmkkkqtusrrppmkikqqsqrqpn'
+                + 'kjjirrvqtqomlfjhvuspqmlklihhuwtppommlghguutrtqonmfjjtvvtxsrrkgljyvvuvqmmlljkxwwtsuqomlmnwywtvtqokhjovwuutsrpljlmvvtttqpn'
+                + 'ljglzvtsutspllklyytvutrpllknzwtsusrpkkjlxxtsvtrqimmjvvupttrqjklnzyrstrqplotovyttvttqjmrpxurtsronknslwxtsrqqplorkuwutvtrs'
+                + 'loqpsvuttsrqljnmtwtsrstqlnrptxuurstsjnshrtoqnnookntqtvqrsqrpjmrmtwrssrrrlosntxsstrooklrlptqnppqnkooootsrppnknpqlqtoooopo'
+                + 'mospqqpnnlpmmpqioqonomnnlormpsqkimkoloogltrmonlmllmfmrrlklmnkjljmopjjilomkiesqmnniklklpglopjnlnnlljhlklhkjkmjkjglnjiighj'
+                + 'kkjbhjkgheehkjgdhjigfffhjhfbegideeeg000000001100'
+        },
+        // DSBGDTH1
+        impDeath: {
+            pitch: '000ddccc00000000000zzzzz0000',
+            tone: '00000000000000000000000000000000000000000000000000000000',
+            levels: 'njljighhgfffomnqmilmhhggonrnmjilihgiomsqokllhhghooustqpqlhhhooxtuuvvpijinnwsutuuoighoixtusttojhhnpuvtsvtnhihopwuvvwvphhi'
+                + 'osyxvrwysjljorxxwuyyulonoqxvwtyxsmmlprzxttssnghioquvvrssnigjonwuvtxxtkikoquuvruuohikpsxurnrqmjhiorytvrrrmiijpputwpstpjhi'
+                + 'poxxspssnjijoowttlqokihjpsyuvorqpigippxutnpolhiipoooqmomihikpoustnqrhiijpnpnpkmmkjhkomqonkmiigii'
+        },
+        // DSFIRSHT
+        fireballLaunch: {
+            pitch: '000kkk0000000000000000000000000000000000000000000000000000',
+            tone: '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+            levels: 'kmhijjfhkkklmrjijkhjkmkljqmijmillllljuqiilhjkllmmvsmjlilkmonpqqnnlmmklnnrpllmnkmlmlmrpljnmkknonnpuqmjnnmmmoolqqrmomonqpn'
+                + 'psrnnmknonmnlpskmnmopnnnoqspnmopponnsromknlpmponpookonmpqooooponnosqooppqpslpmqpqooprtvlooooqqqqrpsooorqqrrrqxvqpqqssrss'
+                + 'twqttqottttstwsoqssttvsrmsuuoruttuusuvrrqsttvtstvsroortususstsooqquvtvssnqrprsrtssrssqnnnppprpqpqqlmoonorqppklokmoqqqqoo'
+                + 'noljmonnopnojmmlnmooponohllnmonpoooolkjmklmoqooonmjlmmnnopoolilommnpoooomlkmmmlpnoorlrjnnmmoppqqluwljlloqoprmsupnppoqrqs'
+                + 'luzqjnorrsqrvtvnnoqqqstsqwyqqqqsssrtowwrtppqpqqrqvsqonmoonqrovvsppmnnmopwqrpmonnlnprtsrlnomojnpqtqomknnomloplqmljmomllon'
+                + 'osnkjmlkjlmoookljnkljkmonomkkljiikomnmmigkijikmliljjiiihhjmmjjjkkighgilniilighcghjlmkgededffegjl'
+        },
+        // DSFIRXPL
+        fireballExplode: {
+            pitch: '0000000000000000000000000000000000000000000000',
+            tone: '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+            levels: 'rstspoopqsrtupsnrqrssvuvtsrqrpqssttuswxsrrnqqtutvuzvtroqqrsvwtsusrqpqsuusvsrqqporrpsxuuqrpoqqpppwxutsqoppqqpwuttrqpoopop'
+                + 'xxtprqpnopooruvuqpqoopnnxuuopnmnnmolvssrromkkkklrrtsopomknmktttonnmlikijspqomnmmmjiftqtpqonmlkifwtrromljiihhusrommmljhgd'
+                + 'wqtsromlkjhfvtslqnokkhihtromnkhihfgespnnmlkjgfddrqssommjjgeevurromkiigebopqlolklifdcmmqqqnmkhfdcsrpmklkigfedpsqomljjhedb'
+                + 'rpnpnmkigecbutssronijgeeoqpookkhfdbcrponolijedacrqoonljhfdcbtuspnmihgccbvtrqpnljgdbcytrnpmkgdcacvspqplkjfcbbwpmnmlliebab'
+                + 'tuommkkiedabtprronnjgdbbvtrqpomiedabuppppmiheabbwrqnmmiiedccvqopolggdd9b'
+        },
+        // DSCLAW
+        claw: {
+            pitch: '0000000000000000000000000',
+            tone: '00000000000000000000000000000000000000000000000000',
+            levels: 'qqqpptvuttwxsqrirutustuvprqquwvvvvwwopppruvuvuuvpsqrssqqstuwrsqmqtutvuxypqspttuuvwwxqqqpprtrsvvxookpsttswuyzoorntustuxwx'
+                + 'omsttsutvwxzoonrtvurvvwyponqutwsuwyxqlmorwvtwxxxqmppuuutuwwypioquvuuuxxyqiopsvvvuxxypoooprrrrtssqjmrsrsutvvvqhltsvsuuwxv'
+                + 'qkmrsxxtvvwwplknqrurrsrspjnpqrtrpoqpnfkmnnrpmpnnolnnsusqorrq'
+        }
+    };
+
+    // Fast Fourier transform in place. direction is -1 for the forward transform and 1 for the inverse transform,
+    // which this function does not scale.
+    function transformSpectrum(real, imaginary, direction) {
+        const size = real.length;
+        for (let index = 1, reversed = 0; index < size; index++) {
+            let bit = size >> 1;
+            for (; reversed & bit; bit >>= 1) { reversed ^= bit; }
+            reversed ^= bit;
+            if (index < reversed) {
+                const heldReal = real[index];
+                real[index] = real[reversed];
+                real[reversed] = heldReal;
+                const heldImaginary = imaginary[index];
+                imaginary[index] = imaginary[reversed];
+                imaginary[reversed] = heldImaginary;
+            }
+        }
+        for (let span = 2; span <= size; span <<= 1) {
+            const angle = direction * TWO_PI / span;
+            for (let start = 0; start < size; start += span) {
+                for (let offset = 0; offset < span / 2; offset++) {
+                    const cosine = Math.cos(angle * offset);
+                    const sine = Math.sin(angle * offset);
+                    const evenIndex = start + offset;
+                    const oddIndex = evenIndex + span / 2;
+                    const oddReal = real[oddIndex] * cosine - imaginary[oddIndex] * sine;
+                    const oddImaginary = real[oddIndex] * sine + imaginary[oddIndex] * cosine;
+                    real[oddIndex] = real[evenIndex] - oddReal;
+                    imaginary[oddIndex] = imaginary[evenIndex] - oddImaginary;
+                    real[evenIndex] += oddReal;
+                    imaginary[evenIndex] += oddImaginary;
+                }
+            }
+        }
+    }
+
+    // Returns the samples of one sound, between -1 and 1, quantized to the 8-bit depth of Doom's sound effects.
+    function renderSoundSamples(soundName) {
+        const definition = SOUND_DEFINITIONS[soundName];
+        if (definition === undefined) { throw new Error('Unknown sound: ' + soundName); }
+        const frameCount = definition.pitch.length;
+        if (definition.levels.length !== frameCount * SOUND_BAND_COUNT || definition.tone.length !== frameCount * SOUND_TONE_DIGITS) {
+            throw new Error('Sound ' + soundName + ' has mismatched pitch, tone, and level tables.');
+        }
+        const sampleCount = frameCount * SOUND_FRAME_HOP;
+        const halfWindow = SOUND_WINDOW / 2;
+
+        // The amplitude that each band should have in each frame.
+        const targetAmplitudes = new Float64Array(frameCount * SOUND_BAND_COUNT);
+        for (let digitIndex = 0; digitIndex < targetAmplitudes.length; digitIndex++) {
+            const digit = parseInt(definition.levels[digitIndex], SOUND_DIGIT_BASE);
+            targetAmplitudes[digitIndex] = digit === 0 ? 0 : Math.pow(10, (digit * SOUND_LEVEL_STEP_DECIBELS - SOUND_LEVEL_RANGE_DECIBELS) / 20);
+        }
+
+        // The raw source: noise, plus a train of pulses in the frames that have a pitch, or a sine in the frames that
+        // have a tone. The buffer starts halfWindow samples before the sound and ends halfWindow samples after it.
+        const source = new Float64Array(sampleCount + SOUND_WINDOW);
+        let pulsePhase = 0;
+        let tonePhase = 0;
+        let drift = 0;
+        let glidingPitch = 0;
+        let glidingTone = 0;
+        let softPulse = 0;
+        for (let bufferIndex = 0; bufferIndex < source.length; bufferIndex++) {
+            const frame = clamp(Math.floor((bufferIndex - halfWindow) / SOUND_FRAME_HOP), 0, frameCount - 1);
+            const pitch = parseInt(definition.pitch[frame], SOUND_DIGIT_BASE) * SOUND_PITCH_STEP_HERTZ;
+            const tone = parseInt(definition.tone.substr(frame * SOUND_TONE_DIGITS, SOUND_TONE_DIGITS), SOUND_DIGIT_BASE) * SOUND_TONE_STEP_HERTZ;
+            const noise = Math.random() * 2 - 1;
+            drift += (noise - drift) * 0.02;
+            // The pitch and the tone glide from one frame's value to the next instead of jumping.
+            glidingPitch = pitch === 0 || glidingPitch === 0 ? pitch : glidingPitch + (pitch - glidingPitch) * SOUND_GLIDE;
+            glidingTone = tone === 0 || glidingTone === 0 ? tone : glidingTone + (tone - glidingTone) * SOUND_GLIDE;
+            if (glidingTone > 0) {
+                tonePhase += glidingTone / SOUND_SAMPLE_RATE;
+                source[bufferIndex] = Math.sin(tonePhase * TWO_PI) + noise * SOUND_TONE_NOISE_SHARE;
+            } else if (glidingPitch > 0) {
+                pulsePhase += glidingPitch * (1 + drift * SOUND_PITCH_JITTER) / SOUND_SAMPLE_RATE;
+                let pulse = 0;
+                if (pulsePhase >= 1) {
+                    pulsePhase -= 1;
+                    pulse = Math.sqrt(SOUND_SAMPLE_RATE / glidingPitch);
+                }
+                // Softening the pulses weakens their high harmonics, so that the top of a voice is breath noise, as in a real voice.
+                softPulse += (pulse - softPulse) * SOUND_PULSE_SOFTENING;
+                source[bufferIndex] = softPulse + noise * SOUND_VOICE_NOISE_SHARE;
+            } else {
+                source[bufferIndex] = noise;
+            }
+        }
+
+        const taper = new Float64Array(SOUND_WINDOW);
+        for (let index = 0; index < SOUND_WINDOW; index++) { taper[index] = 0.5 - 0.5 * Math.cos(TWO_PI * index / SOUND_WINDOW); }
+        const bandOfBin = new Uint8Array(halfWindow + 1);
+        for (let bin = 0; bin <= halfWindow; bin++) {
+            const frequency = bin * SOUND_SAMPLE_RATE / SOUND_WINDOW;
+            let band = 0;
+            while (band < SOUND_BAND_COUNT - 1 && frequency >= SOUND_BAND_EDGES[band + 1]) { band++; }
+            bandOfBin[bin] = band;
+        }
+
+        // Take overlapping windows of the source, scale each frequency band of each window to its target amplitude,
+        // and add the windows back together.
+        const shaped = new Float64Array(source.length);
+        const real = new Float64Array(SOUND_WINDOW);
+        const imaginary = new Float64Array(SOUND_WINDOW);
+        const bandEnergy = new Float64Array(SOUND_BAND_COUNT);
+        const bandGain = new Float64Array(SOUND_BAND_COUNT);
+        for (let center = 0; center <= sampleCount; center += SOUND_SYNTHESIS_HOP) {
+            for (let index = 0; index < SOUND_WINDOW; index++) {
+                real[index] = source[center + index] * taper[index];
+                imaginary[index] = 0;
+            }
+            transformSpectrum(real, imaginary, -1);
+            bandEnergy.fill(0);
+            for (let bin = 0; bin <= halfWindow; bin++) { bandEnergy[bandOfBin[bin]] += real[bin] * real[bin] + imaginary[bin] * imaginary[bin]; }
+            const framePosition = clamp((center - SOUND_FRAME_HOP / 2) / SOUND_FRAME_HOP, 0, frameCount - 1);
+            const earlierFrame = Math.floor(framePosition);
+            const laterFrame = Math.min(frameCount - 1, earlierFrame + 1);
+            const blend = framePosition - earlierFrame;
+            for (let band = 0; band < SOUND_BAND_COUNT; band++) {
+                const target = targetAmplitudes[earlierFrame * SOUND_BAND_COUNT + band] * (1 - blend) + targetAmplitudes[laterFrame * SOUND_BAND_COUNT + band] * blend;
+                bandGain[band] = bandEnergy[band] > 0 ? target / Math.sqrt(bandEnergy[band]) : 0;
+            }
+            for (let bin = 0; bin <= halfWindow; bin++) {
+                const gain = bandGain[bandOfBin[bin]];
+                real[bin] *= gain;
+                imaginary[bin] *= gain;
+                if (bin > 0 && bin < halfWindow) {
+                    real[SOUND_WINDOW - bin] *= gain;
+                    imaginary[SOUND_WINDOW - bin] *= gain;
+                }
+            }
+            transformSpectrum(real, imaginary, 1);
+            for (let index = 0; index < SOUND_WINDOW; index++) { shaped[center + index] += real[index] * taper[index]; }
+        }
+
+        const samples = new Float32Array(sampleCount);
+        let peak = 0;
+        for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) { peak = Math.max(peak, Math.abs(shaped[sampleIndex + halfWindow])); }
+        if (!(peak > 0)) { throw new Error('Sound ' + soundName + ' is silent or invalid.'); }
+        for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+            samples[sampleIndex] = Math.round(shaped[sampleIndex + halfWindow] / peak * SOUND_PEAK * SOUND_SAMPLE_STEPS) / SOUND_SAMPLE_STEPS;
+        }
+        return samples;
+    }
+
+    // ---------------------------------------------------------------- sound playback
+
+    let audioContext = null;
+    const soundBuffers = new Map();
+    const soundSamples = new Map();
+
+    // Synthesizes one sound that has no samples yet. Returns false when every sound already has its samples.
+    function synthesizeNextSound() {
+        for (const soundName of Object.keys(SOUND_DEFINITIONS)) {
+            if (!soundSamples.has(soundName)) {
+                soundSamples.set(soundName, renderSoundSamples(soundName));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Synthesizes the sounds one at a time while the title screen shows, so that the first click starts the game
+    // without a pause. A browser allows an AudioContext only after a click or a key press, so only the samples are
+    // made here.
+    function synthesizeSoundsInBackground() {
+        if (synthesizeNextSound()) { setTimeout(synthesizeSoundsInBackground, 0); }
+    }
+
+    function startAudio() {
+        audioContext = new AudioContext();
+        while (synthesizeNextSound()) {
+            // The player started before the background synthesis finished, so the remaining sounds are made now.
+        }
+        for (const [soundName, samples] of soundSamples) {
+            const buffer = audioContext.createBuffer(1, samples.length, SOUND_SAMPLE_RATE);
+            buffer.getChannelData(0).set(samples);
+            soundBuffers.set(soundName, buffer);
+        }
+    }
+
+    function playSoundWithMix(soundName, volume, pan) {
+        const buffer = soundBuffers.get(soundName);
+        if (buffer === undefined) { throw new Error('Unknown sound: ' + soundName); }
+        if (volume <= 0) { return; }
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        const gain = audioContext.createGain();
+        gain.gain.value = volume;
+        const panner = audioContext.createStereoPanner();
+        panner.pan.value = pan;
+        source.connect(gain);
+        gain.connect(panner);
+        panner.connect(audioContext.destination);
+        source.start();
+    }
+
+    function playSound(soundName) {
+        playSoundWithMix(soundName, 1, 0);
+    }
+
+    function playSoundAt(soundName, sourceX, sourceY) {
+        const deltaX = sourceX - player.x;
+        const deltaY = sourceY - player.y;
+        const distance = Math.hypot(deltaX, deltaY);
+        const volume = clamp((SOUND_CLIP_DISTANCE - distance) / (SOUND_CLIP_DISTANCE - SOUND_CLOSE_DISTANCE), 0, 1);
+        const rightness = distance === 0 ? 0 : (deltaX * Math.sin(player.angle) - deltaY * Math.cos(player.angle)) / distance;
+        playSoundWithMix(soundName, volume, rightness * SOUND_PAN_WIDTH);
+    }
+
+    // ---------------------------------------------------------------- level start
+
+    function startLevel() {
+        buildLevelGeometry();
+        things = [];
+        killCount = 0;
+        monsterCount = 0;
+        levelTic = 0;
+        exitTics = 0;
+        extraLight = 0;
+        message = { text: '', tics: 0 };
+        face = { lookIndex: 1, lookTics: 0, ouchTics: 0 };
+        weapon = { step: WEAPON_READY, tics: 0, flashTics: 0, refire: false, bobX: 0, bobY: 0 };
+        const startSector = sectorAt(PLAYER_START.x, PLAYER_START.y);
+        if (startSector === null) { throw new Error('The player start lies outside the level.'); }
+        player = {
+            x: PLAYER_START.x, y: PLAYER_START.y, z: startSector.floor, angle: PLAYER_START.angleDegrees * Math.PI / 180,
+            momentumX: 0, momentumY: 0, momentumZ: 0, radius: PLAYER_RADIUS, height: PLAYER_HEIGHT, maxDropHeight: Infinity,
+            sector: startSector, floorZ: startSector.floor, ceilZ: startSector.ceil,
+            viewHeight: PLAYER_VIEW_HEIGHT, viewHeightDelta: 0, bob: 0,
+            health: START_HEALTH, armor: 0, ammo: START_AMMO, damageCount: 0, bonusCount: 0, dead: false, deadTics: 0
+        };
+        for (const spawn of THING_SPAWNS) {
+            const sector = sectorAt(spawn[1], spawn[2]);
+            if (sector === null) { throw new Error('Thing ' + spawn[0] + ' at ' + spawn[1] + ',' + spawn[2] + ' lies outside the level.'); }
+            if (spawn[0] in MONSTER_KINDS) {
+                things.push({
+                    type: 'monster', think: thinkMonster, kindName: spawn[0], kind: MONSTER_KINDS[spawn[0]], x: spawn[1], y: spawn[2], z: sector.floor,
+                    angle: spawn[3] * Math.PI / 180, radius: MONSTER_RADIUS, height: MONSTER_HEIGHT, maxDropHeight: MAX_STEP_HEIGHT, solid: true,
+                    sector: sector, floorZ: sector.floor, ceilZ: sector.ceil, health: MONSTER_KINDS[spawn[0]].health,
+                    sprite: sprites[spawn[0]].walk[0], fullBright: false, mode: 'idle', tics: 1 + (randomByte() % IDLE_LOOK_TICS),
+                    walkPhase: 0, moveDirection: NO_DIRECTION, moveCount: 0, reaction: 0, justHit: false, justAttacked: false,
+                    sequenceIndex: 0, frameIndex: 0, removed: false
+                });
+                monsterCount++;
+            } else {
+                spawnItem(spawn[0], spawn[1], spawn[2], sector, CLIP_AMMO);
+            }
+        }
+    }
+
+    function spawnItem(itemName, itemX, itemY, sector, clipAmount) {
+        const itemKind = ITEM_KINDS[itemName];
+        if (itemKind === undefined) { throw new Error('Unknown thing kind: ' + itemName); }
+        things.push({
+            type: 'item', think: thinkItem, itemKind: itemKind, clipAmount: clipAmount, x: itemX, y: itemY, z: sector.floor,
+            radius: ITEM_RADIUS, solid: false, sector: sector, frames: sprites[itemName], sprite: sprites[itemName][0], fullBright: false, removed: false
+        });
+    }
+
+    function spawnEffect(frames, effectX, effectY, effectZ, ticsPerFrame, riseSpeed, fullBright) {
+        const sector = sectorAt(effectX, effectY);
+        if (sector === null) { return; }
+        things.push({
+            type: 'effect', think: thinkEffect, x: effectX, y: effectY, z: effectZ, solid: false, sector: sector, sprite: frames[0], fullBright: fullBright,
+            frames: frames, frameIndex: 0, ticsPerFrame: ticsPerFrame, tics: ticsPerFrame, riseSpeed: riseSpeed, removed: false
+        });
+    }
+
+    // ---------------------------------------------------------------- doors, use, and sound propagation
+
+    function activateDoor(sector) {
+        const door = sector.door;
+        if (door.state === 'closed' || door.state === 'closing') {
+            door.state = 'opening';
+            playSoundAt('doorOpen', sector.centerX, sector.centerY);
+        } else if (door.state === 'waiting') {
+            door.state = 'closing';
+            playSoundAt('doorClose', sector.centerX, sector.centerY);
+        }
+    }
+
+    function thingTouchesSector(thing, sector) {
+        return sector.lines.some((line) => distanceToLine(thing.x, thing.y, line) < thing.radius);
+    }
+
+    function thinkDoors() {
+        for (const sector of doorSectors) {
+            const door = sector.door;
+            if (door.state === 'opening') {
+                sector.ceil = Math.min(door.top, sector.ceil + DOOR_SPEED);
+                if (sector.ceil === door.top) {
+                    door.state = 'waiting';
+                    door.timer = DOOR_WAIT_TICS;
+                }
+            } else if (door.state === 'waiting') {
+                door.timer--;
+                if (door.timer === 0) { activateDoor(sector); }
+            } else if (door.state === 'closing') {
+                const obstructed = thingTouchesSector(player, sector) || things.some((thing) => thing.solid && thingTouchesSector(thing, sector));
+                if (obstructed) {
+                    activateDoor(sector);
+                } else {
+                    sector.ceil = Math.max(sector.floor, sector.ceil - DOOR_SPEED);
+                    if (sector.ceil === sector.floor) { door.state = 'closed'; }
+                }
+            }
+        }
+    }
+
+    function useLines() {
+        collectHits(player.x, player.y, Math.cos(player.angle), Math.sin(player.angle));
+        for (let hitIndex = 0; hitIndex < hitCount && hitParams[hitIndex] <= USE_RANGE; hitIndex++) {
+            const line = hitLines[hitIndex];
+            const far = hitOnFront[hitIndex] === 1 ? line.back : line.front;
+            if (line.exitSwitch) {
+                if (exitTics === 0) {
+                    line.middle = textures.switchOn;
+                    exitTics = EXIT_DELAY_TICS;
+                    playSound('switch');
+                }
+                return;
+            }
+            if (far === null) {
+                playSound('oof');
+                return;
+            }
+            if (far.door !== null) {
+                activateDoor(far);
+                return;
+            }
+            if (openingTop(line) <= openingBottom(line)) {
+                playSound('oof');
+                return;
+            }
+        }
+    }
+
+    // A gunshot wakes every idle monster in a sector that sound reaches through openings from the player's sector.
+    function noiseAlert() {
+        const reached = new Set([player.sector]);
+        const pending = [player.sector];
+        while (pending.length > 0) {
+            const sector = pending.pop();
+            for (const neighbor of sector.neighbors) {
+                const line = neighbor.line;
+                const open = openingTop(line) > openingBottom(line);
+                if (open && !reached.has(neighbor.sector)) {
+                    reached.add(neighbor.sector);
+                    pending.push(neighbor.sector);
+                }
+            }
+        }
+        for (const thing of things) {
+            if (thing.type === 'monster' && thing.mode === 'idle' && reached.has(thing.sector)) { wakeMonster(thing); }
+        }
+    }
+
+    // ---------------------------------------------------------------- combat
+
+    function showMessage(text) {
+        message = { text: text, tics: MESSAGE_TICS };
+    }
+
+    function rollDamage(dice) {
+        return (randomByte() % dice.sides + 1) * dice.multiplier;
+    }
+
+    function damagePlayer(amount) {
+        if (player.dead) { return; }
+        const absorbed = Math.min(player.armor, Math.floor(amount / ARMOR_ABSORB_DIVISOR));
+        player.armor -= absorbed;
+        const remaining = amount - absorbed;
+        player.health = Math.max(0, player.health - remaining);
+        player.damageCount = Math.min(MAX_DAMAGE_FLASH, player.damageCount + remaining);
+        face.ouchTics = FACE_OUCH_TICS;
+        if (player.health === 0) {
+            player.dead = true;
+            playSound('playerDeath');
+        } else {
+            playSound('playerPain');
+        }
+    }
+
+    function enterChase(monster) {
+        monster.mode = 'chase';
+        monster.tics = monster.kind.chaseTics;
+        monster.sprite = sprites[monster.kindName].walk[0];
+        monster.fullBright = false;
+    }
+
+    function wakeMonster(monster) {
+        monster.reaction = MONSTER_REACTION_STEPS;
+        enterChase(monster);
+        playSoundAt(monster.kind.sightSound, monster.x, monster.y);
+    }
+
+    function damageMonster(monster, amount) {
+        monster.health -= amount;
+        if (monster.health <= 0) {
+            monster.mode = 'die';
+            monster.solid = false;
+            monster.fullBright = false;
+            monster.frameIndex = 0;
+            monster.sprite = sprites[monster.kindName].die[0];
+            monster.tics = DEATH_FRAME_TICS;
+            killCount++;
+            playSoundAt(monster.kind.deathSound, monster.x, monster.y);
+            if (monster.kind.dropsClip) { spawnItem('clip', monster.x, monster.y, monster.sector, DROPPED_CLIP_AMMO); }
+            return;
+        }
+        monster.justHit = true;
+        if (randomByte() < monster.kind.painChance) {
+            monster.mode = 'pain';
+            monster.tics = PAIN_TICS;
+            monster.sprite = sprites[monster.kindName].pain;
+            monster.fullBright = false;
+            playSoundAt('monsterPain', monster.x, monster.y);
+        } else if (monster.mode === 'idle') {
+            wakeMonster(monster);
+        }
+    }
+
+    // Fires one bullet. The bullet hits the nearest visible target on the line of fire, or else the first wall.
+    function fireBullet(shooter, angle, damage) {
+        const originZ = shooter.z + SHOT_HEIGHT;
+        const directionX = Math.cos(angle);
+        const directionY = Math.sin(angle);
+        const targets = shooter === player ? things.filter((thing) => thing.type === 'monster' && thing.solid) : [player];
+        let hitTarget = null;
+        let hitDistance = SHOT_RANGE;
+        for (const target of targets) {
+            const relativeX = target.x - shooter.x;
+            const relativeY = target.y - shooter.y;
+            const along = relativeX * directionX + relativeY * directionY;
+            if (along <= 0 || along >= hitDistance) { continue; }
+            if (Math.abs(relativeX * directionY - relativeY * directionX) > target.radius) { continue; }
+            if (!canSee(shooter.x, shooter.y, originZ, target)) { continue; }
+            hitTarget = target;
+            hitDistance = along;
+        }
+        if (hitTarget === player) {
+            damagePlayer(damage);
+            return;
+        }
+        if (hitTarget !== null) {
+            const bloodDistance = hitDistance - hitTarget.radius;
+            spawnEffect(sprites.blood, shooter.x + directionX * bloodDistance, shooter.y + directionY * bloodDistance, hitTarget.z + SHOT_HEIGHT, 6, -1, false);
+            damageMonster(hitTarget, damage);
+            return;
+        }
+        collectHits(shooter.x, shooter.y, directionX, directionY);
+        for (let hitIndex = 0; hitIndex < hitCount && hitParams[hitIndex] < SHOT_RANGE; hitIndex++) {
+            const line = hitLines[hitIndex];
+            const stops = line.back === null
+                || originZ <= openingBottom(line)
+                || originZ >= openingTop(line);
+            if (stops) {
+                const puffDistance = hitParams[hitIndex] - PUFF_PULLBACK;
+                spawnEffect(sprites.puff, shooter.x + directionX * puffDistance, shooter.y + directionY * puffDistance, originZ, 4, 1, false);
+                return;
+            }
+        }
+    }
+
+    function firePistol() {
+        player.ammo--;
+        weapon.flashTics = GUN_FLASH_TICS;
+        playSound('pistol');
+        noiseAlert();
+        const spread = weapon.refire ? (randomByte() - randomByte()) * PISTOL_SPREAD_RADIANS : 0;
+        fireBullet(player, player.angle + spread, rollDamage(PISTOL_DAMAGE));
+    }
+
+    function thinkWeapon() {
+        if (weapon.flashTics > 0) { weapon.flashTics--; }
+        extraLight = weapon.flashTics > 0 ? 1 : 0;
+        const wantsFire = !player.dead && player.ammo > 0 && (heldKeys.has('ControlLeft') || heldKeys.has('ControlRight'));
+        if (weapon.step === WEAPON_READY) {
+            const bobTurn = TWO_PI * levelTic / WEAPON_BOB_PERIOD_TICS;
+            weapon.bobX = player.bob * Math.cos(bobTurn);
+            weapon.bobY = player.bob * Math.abs(Math.sin(bobTurn));
+            if (!wantsFire) { return; }
+            weapon.step = 0;
+            weapon.refire = false;
+            weapon.tics = PISTOL_SEQUENCE[0].tics;
+            return;
+        }
+        weapon.tics--;
+        if (weapon.tics > 0) { return; }
+        weapon.step++;
+        if (weapon.step === PISTOL_SEQUENCE.length) {
+            if (!wantsFire) {
+                weapon.step = WEAPON_READY;
+                return;
+            }
+            weapon.step = 0;
+            weapon.refire = true;
+        }
+        weapon.tics = PISTOL_SEQUENCE[weapon.step].tics;
+        if (PISTOL_SEQUENCE[weapon.step].fire) { firePistol(); }
+    }
+
+    // ---------------------------------------------------------------- monsters
+
+    function monsterSeesPlayer(monster) {
+        if (player.dead || !canSee(monster.x, monster.y, monster.z + MONSTER_EYE_HEIGHT, player)) { return false; }
+        const deltaX = player.x - monster.x;
+        const deltaY = player.y - monster.y;
+        if (Math.hypot(deltaX, deltaY) <= MELEE_RANGE) { return true; }
+        return Math.abs(normalizeAngle(Math.atan2(deltaY, deltaX) - monster.angle)) <= Math.PI / 2;
+    }
+
+    function monsterMove(monster) {
+        if (monster.moveDirection === NO_DIRECTION) { return false; }
+        const vector = DIRECTION_VECTORS[monster.moveDirection];
+        const result = tryMove(monster, monster.x + vector[0] * MONSTER_SPEED, monster.y + vector[1] * MONSTER_SPEED);
+        if (result.blocked) {
+            const line = result.blockingLine;
+            if (line !== null && line.back !== null) {
+                for (const sector of [line.front, line.back]) {
+                    if (sector.door !== null && sector.door.state === 'closed') { activateDoor(sector); }
+                }
+            }
+            return false;
+        }
+        monster.z = monster.floorZ;
+        return true;
+    }
+
+    function chooseDirection(monster) {
+        const deltaX = player.x - monster.x;
+        const deltaY = player.y - monster.y;
+        const horizontal = deltaX > CHASE_AXIS_THRESHOLD ? DIRECTION_EAST : deltaX < -CHASE_AXIS_THRESHOLD ? DIRECTION_WEST : NO_DIRECTION;
+        const vertical = deltaY > CHASE_AXIS_THRESHOLD ? DIRECTION_NORTH : deltaY < -CHASE_AXIS_THRESHOLD ? DIRECTION_SOUTH : NO_DIRECTION;
+        const previous = monster.moveDirection;
+        const opposite = previous === NO_DIRECTION ? NO_DIRECTION : (previous + 4) % 8;
+        const candidates = [];
+        if (horizontal !== NO_DIRECTION && vertical !== NO_DIRECTION) {
+            candidates.push(horizontal === DIRECTION_EAST ? (vertical === DIRECTION_NORTH ? 1 : 7) : (vertical === DIRECTION_NORTH ? 3 : 5));
+        }
+        if (Math.abs(deltaY) > Math.abs(deltaX) || randomByte() > 200) {
+            candidates.push(vertical, horizontal);
+        } else {
+            candidates.push(horizontal, vertical);
+        }
+        candidates.push(previous);
+        const firstScan = randomByte() & 7;
+        for (let scanOffset = 0; scanOffset < 8; scanOffset++) { candidates.push((firstScan + scanOffset) % 8); }
+        candidates.push(opposite);
+        for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+            const candidate = candidates[candidateIndex];
+            const isLastResort = candidateIndex === candidates.length - 1;
+            if (candidate === NO_DIRECTION || (candidate === opposite && !isLastResort)) { continue; }
+            monster.moveDirection = candidate;
+            if (monsterMove(monster)) {
+                monster.moveCount = randomByte() & 15;
+                return;
+            }
+        }
+        monster.moveDirection = NO_DIRECTION;
+    }
+
+    function applyAttackStep(monster) {
+        const step = monster.kind.attackSequence[monster.sequenceIndex];
+        monster.sprite = sprites[monster.kindName][step.frame];
+        monster.tics = step.tics;
+        monster.fullBright = step.frame === 'fire';
+        const angleToPlayer = Math.atan2(player.y - monster.y, player.x - monster.x);
+        monster.angle = angleToPlayer;
+        if (step.action === 'shoot') {
+            playSoundAt('pistol', monster.x, monster.y);
+            fireBullet(monster, angleToPlayer + (randomByte() - randomByte()) * ZOMBIE_SPREAD_RADIANS, rollDamage(ZOMBIE_SHOT_DAMAGE));
+        } else if (step.action === 'impAttack') {
+            const distance = Math.hypot(player.x - monster.x, player.y - monster.y);
+            if (distance < MELEE_RANGE + PLAYER_RADIUS) {
+                playSoundAt('claw', monster.x, monster.y);
+                damagePlayer(rollDamage(IMP_DAMAGE));
+            } else {
+                playSoundAt('fireballLaunch', monster.x, monster.y);
+                const travelTics = Math.max(1, distance / FIREBALL_SPEED);
+                things.push({
+                    type: 'missile', think: thinkMissile, x: monster.x, y: monster.y, z: monster.z + SHOT_HEIGHT, solid: false, sector: monster.sector,
+                    velocityX: Math.cos(angleToPlayer) * FIREBALL_SPEED, velocityY: Math.sin(angleToPlayer) * FIREBALL_SPEED,
+                    velocityZ: (player.z - monster.z) / travelTics,
+                    sprite: sprites.fireball[0], fullBright: true, removed: false
+                });
+            }
+        } else if (step.action !== 'none') {
+            throw new Error('Unknown monster action: ' + step.action);
+        }
+    }
+
+    function chaseStep(monster) {
+        if (monster.reaction > 0) { monster.reaction--; }
+        if (monster.justAttacked) {
+            monster.justAttacked = false;
+            chooseDirection(monster);
+            return;
+        }
+        if (!player.dead) {
+            const distance = Math.hypot(player.x - monster.x, player.y - monster.y);
+            const visible = canSee(monster.x, monster.y, monster.z + MONSTER_EYE_HEIGHT, player);
+            let attacks = monster.kind.melee && visible && distance < MELEE_RANGE + PLAYER_RADIUS;
+            if (!attacks && visible && monster.moveCount === 0) {
+                if (monster.justHit) {
+                    monster.justHit = false;
+                    attacks = true;
+                } else if (monster.reaction === 0) {
+                    const threshold = Math.min(200, distance - 64 - (monster.kind.melee ? 0 : 128));
+                    attacks = randomByte() >= threshold;
+                }
+            }
+            if (attacks) {
+                monster.mode = 'attack';
+                monster.sequenceIndex = 0;
+                applyAttackStep(monster);
+                return;
+            }
+        }
+        monster.moveCount--;
+        if (monster.moveCount < 0 || !monsterMove(monster)) { chooseDirection(monster); }
+    }
+
+    function thinkMonster(monster) {
+        if (monster.mode === 'dead') { return; }
+        monster.tics--;
+        if (monster.tics > 0) { return; }
+        const monsterSprites = sprites[monster.kindName];
+        if (monster.mode === 'idle') {
+            monster.tics = IDLE_LOOK_TICS;
+            if (monsterSeesPlayer(monster)) { wakeMonster(monster); }
+        } else if (monster.mode === 'chase') {
+            monster.tics = monster.kind.chaseTics;
+            monster.walkPhase = (monster.walkPhase + 1) % 4;
+            monster.sprite = monsterSprites.walk[monster.walkPhase >> 1];
+            chaseStep(monster);
+        } else if (monster.mode === 'attack') {
+            monster.sequenceIndex++;
+            if (monster.sequenceIndex < monster.kind.attackSequence.length) {
+                applyAttackStep(monster);
+            } else {
+                monster.justAttacked = true;
+                enterChase(monster);
+            }
+        } else if (monster.mode === 'pain') {
+            enterChase(monster);
+        } else if (monster.mode === 'die') {
+            monster.frameIndex++;
+            if (monster.frameIndex < monsterSprites.die.length) {
+                monster.sprite = monsterSprites.die[monster.frameIndex];
+                monster.tics = DEATH_FRAME_TICS;
+            } else {
+                monster.mode = 'dead';
+            }
+        } else {
+            throw new Error('Unknown monster mode: ' + monster.mode);
+        }
+    }
+
+    function explodeMissile(missile) {
+        playSoundAt('fireballExplode', missile.x, missile.y);
+        missile.removed = true;
+        spawnEffect(sprites.explosion, missile.x, missile.y, missile.z - 8, 6, 0, true);
+    }
+
+    function thinkMissile(missile) {
+        const nextX = missile.x + missile.velocityX;
+        const nextY = missile.y + missile.velocityY;
+        const nextZ = missile.z + missile.velocityZ;
+        const hitsWall = someCrossedLine(missile.x, missile.y, nextX, nextY, (line) => line.back === null
+            || nextZ < openingBottom(line)
+            || nextZ + FIREBALL_HEIGHT > openingTop(line));
+        const nextSector = hitsWall ? null : sectorAt(nextX, nextY);
+        if (nextSector === null || nextZ < nextSector.floor || nextZ + FIREBALL_HEIGHT > nextSector.ceil) {
+            explodeMissile(missile);
+            return;
+        }
+        missile.x = nextX;
+        missile.y = nextY;
+        missile.z = nextZ;
+        missile.sector = nextSector;
+        missile.sprite = sprites.fireball[(levelTic >> 2) & 1];
+        const reach = PLAYER_RADIUS + FIREBALL_RADIUS;
+        if (!player.dead && Math.abs(nextX - player.x) < reach && Math.abs(nextY - player.y) < reach
+            && nextZ + FIREBALL_HEIGHT > player.z && nextZ < player.z + PLAYER_HEIGHT) {
+            damagePlayer(rollDamage(IMP_DAMAGE));
+            explodeMissile(missile);
+        }
+    }
+
+    function thinkEffect(effect) {
+        effect.z += effect.riseSpeed;
+        effect.tics--;
+        if (effect.tics > 0) { return; }
+        effect.frameIndex++;
+        if (effect.frameIndex === effect.frames.length) {
+            effect.removed = true;
+            return;
+        }
+        effect.sprite = effect.frames[effect.frameIndex];
+        effect.tics = effect.ticsPerFrame;
+    }
+
+    function touchItem(item) {
+        const reach = PLAYER_RADIUS + item.radius;
+        if (Math.abs(item.x - player.x) >= reach || Math.abs(item.y - player.y) >= reach) { return; }
+        if (item.z > player.z + PLAYER_HEIGHT || item.z < player.z - MAX_STEP_HEIGHT) { return; }
+        if (!item.itemKind.pickUp(item)) { return; }
+        item.removed = true;
+        player.bonusCount += BONUS_FLASH_TICS;
+        showMessage(item.itemKind.message);
+        playSound('pickup');
+    }
+
+    function thinkItem(item) {
+        item.sprite = item.frames[Math.floor(levelTic / ITEM_FRAME_TICS) % item.frames.length];
+        if (!player.dead) { touchItem(item); }
+    }
+
+    function thinkThings() {
+        const thingCount = things.length;
+        for (let thingIndex = 0; thingIndex < thingCount; thingIndex++) {
+            const thing = things[thingIndex];
+            thing.think(thing);
+        }
+        things = things.filter((thing) => !thing.removed);
+    }
+
+    // ---------------------------------------------------------------- player
+
+    function thinkPlayer(useRequested) {
+        const onGround = player.z <= player.floorZ;
+        if (player.dead) {
+            player.deadTics++;
+            if (player.viewHeight > DEAD_VIEW_HEIGHT) { player.viewHeight--; }
+        } else {
+            const running = heldKeys.has('ShiftLeft') || heldKeys.has('ShiftRight');
+            const strafing = heldKeys.has('AltLeft') || heldKeys.has('AltRight');
+            const leftHeld = heldKeys.has('ArrowLeft');
+            const rightHeld = heldKeys.has('ArrowRight');
+            let forwardMove = 0;
+            let sideMove = 0;
+            const forwardSpeed = running ? RUN_FORWARD_MOVE : WALK_FORWARD_MOVE;
+            if (heldKeys.has('ArrowUp')) { forwardMove += forwardSpeed; }
+            if (heldKeys.has('ArrowDown')) { forwardMove -= forwardSpeed; }
+            const sideSpeed = running ? RUN_SIDE_MOVE : WALK_SIDE_MOVE;
+            if (heldKeys.has('Period') || (strafing && rightHeld)) { sideMove += sideSpeed; }
+            if (heldKeys.has('Comma') || (strafing && leftHeld)) { sideMove -= sideSpeed; }
+            if (!strafing && leftHeld !== rightHeld) {
+                turnHeldTics++;
+                const turnSpeed = turnHeldTics < SLOW_TURN_TICS ? SLOW_TURN_RADIANS : running ? RUN_TURN_RADIANS : WALK_TURN_RADIANS;
+                player.angle = normalizeAngle(player.angle + (leftHeld ? turnSpeed : -turnSpeed));
+            } else {
+                turnHeldTics = 0;
+            }
+            if (onGround) {
+                const cosine = Math.cos(player.angle);
+                const sine = Math.sin(player.angle);
+                player.momentumX += (cosine * forwardMove + sine * sideMove) / THRUST_DIVISOR;
+                player.momentumY += (sine * forwardMove - cosine * sideMove) / THRUST_DIVISOR;
+            }
+            if (useRequested) { useLines(); }
+        }
+
+        if (player.momentumX !== 0 || player.momentumY !== 0) { slideMove(player); }
+        if (onGround) {
+            player.momentumX *= FRICTION;
+            player.momentumY *= FRICTION;
+            if (Math.abs(player.momentumX) < STOP_SPEED && Math.abs(player.momentumY) < STOP_SPEED) {
+                player.momentumX = 0;
+                player.momentumY = 0;
+            }
+        }
+        // A door that moves above the player changes the ceiling without a move, so the heights are read again every tic.
+        const standing = checkPosition(player, player.x, player.y);
+        if (standing.sector !== null) {
+            player.sector = standing.sector;
+            player.floorZ = standing.floorZ;
+            player.ceilZ = standing.ceilZ;
+        }
+        if (player.z < player.floorZ) {
+            player.viewHeight -= player.floorZ - player.z;
+            player.viewHeightDelta = (PLAYER_VIEW_HEIGHT - player.viewHeight) / 8;
+            player.z = player.floorZ;
+            player.momentumZ = 0;
+        } else if (player.z > player.floorZ) {
+            player.momentumZ -= GRAVITY;
+            player.z += player.momentumZ;
+            if (player.z <= player.floorZ) {
+                if (player.momentumZ < -8) {
+                    player.viewHeightDelta = player.momentumZ / 8;
+                    playSound('oof');
+                }
+                player.z = player.floorZ;
+                player.momentumZ = 0;
+            }
+        }
+        if (!player.dead) {
+            player.viewHeight += player.viewHeightDelta;
+            if (player.viewHeight >= PLAYER_VIEW_HEIGHT) {
+                player.viewHeight = PLAYER_VIEW_HEIGHT;
+                player.viewHeightDelta = 0;
+            } else {
+                if (player.viewHeight < PLAYER_VIEW_HEIGHT / 2) { player.viewHeight = PLAYER_VIEW_HEIGHT / 2; }
+                player.viewHeightDelta = Math.max(player.viewHeightDelta, 0) + 0.25;
+            }
+            if (player.sector.damage && player.z <= player.sector.floor && (levelTic & NUKAGE_DAMAGE_INTERVAL_MASK) === 0) {
+                damagePlayer(NUKAGE_DAMAGE);
+            }
+        }
+        player.bob = player.dead ? 0 : Math.min(MAX_BOB, (player.momentumX * player.momentumX + player.momentumY * player.momentumY) / 4);
+        if (player.damageCount > 0) { player.damageCount--; }
+        if (player.bonusCount > 0) { player.bonusCount--; }
+    }
+
+    function thinkSectors() {
+        textures.nukage.pixels = textures.nukage.frames[Math.floor(levelTic / NUKAGE_FRAME_TICS) % textures.nukage.frames.length].pixels;
+        for (const sector of sectors) {
+            if (sector.flicker && (levelTic & 3) === 0) {
+                sector.light = randomByte() < 40 ? sector.baseLight - 48 : sector.baseLight;
+            }
+        }
+        if (face.ouchTics > 0) { face.ouchTics--; }
+        face.lookTics--;
+        if (face.lookTics <= 0) {
+            face.lookTics = FACE_LOOK_TICS;
+            face.lookIndex = randomByte() % 3;
+        }
+        if (message.tics > 0) { message.tics--; }
+    }
+
+    // ---------------------------------------------------------------- rendering
+
+    function startMapFor(light, contrast) {
+        const lightNumber = clamp((light >> 4) + extraLight + contrast, 0, LIGHT_NUMBER_COUNT - 1);
+        return (LIGHT_NUMBER_COUNT - 1 - lightNumber) * 4;
+    }
+
+    function shadeLevelFor(startMap, depth) {
+        let adjustment = (LIGHT_DISTANCE_FACTOR / depth) | 0;
+        if (adjustment > MAX_LIGHT_ADJUSTMENT) { adjustment = MAX_LIGHT_ADJUSTMENT; }
+        return clamp(startMap - adjustment, 0, SHADE_LEVEL_COUNT - 1);
+    }
+
+    // Returns the first screen row whose center lies below the projected height, limited to the open rows of the column.
+    function boundaryRow(projectedRow, low, high) {
+        return clamp(Math.ceil(projectedRow - 0.5), low, high);
+    }
+
+    function drawWallSpan(column, rowStart, rowEnd, texture, textureU, anchorZ, depth, startMap) {
+        if (rowStart >= rowEnd) { return; }
+        const shadeOffset = shadeLevelFor(startMap, depth) * PALETTE_SIZE;
+        const step = depth / PROJECTION_DISTANCE;
+        const texturePixels = texture.pixels;
+        const textureWidth = texture.width;
+        const textureHeight = texture.height;
+        const textureColumn = (textureU | 0) & (textureWidth - 1);
+        let textureV = anchorZ - viewZ - (VIEW_CENTER_ROW - (rowStart + 0.5)) * step + textureHeight * TEXTURE_V_BIAS_REPEATS;
+        let pixelIndex = rowStart * SCREEN_WIDTH + column;
+        for (let row = rowStart; row < rowEnd; row++) {
+            framePixels[pixelIndex] = shadedColors[shadeOffset + texturePixels[((textureV | 0) % textureHeight) * textureWidth + textureColumn]];
+            depthBuffer[pixelIndex] = depth;
+            pixelIndex += SCREEN_WIDTH;
+            textureV += step;
+        }
+    }
+
+    function drawFlatSpan(column, rowStart, rowEnd, flat, planeZ, startMap, rayX, rayY) {
+        const planeDistance = Math.abs(planeZ - viewZ) * PROJECTION_DISTANCE;
+        const flatPixels = flat.pixels;
+        let pixelIndex = rowStart * SCREEN_WIDTH + column;
+        for (let row = rowStart; row < rowEnd; row++) {
+            const distance = planeDistance / Math.abs(VIEW_CENTER_ROW - (row + 0.5));
+            const worldX = viewX + rayX * distance;
+            const worldY = viewY + rayY * distance;
+            const texel = flatPixels[((-worldY & FLAT_MASK) << FLAT_SHIFT) | (worldX & FLAT_MASK)];
+            framePixels[pixelIndex] = shadedColors[shadeLevelFor(startMap, distance) * PALETTE_SIZE + texel];
+            depthBuffer[pixelIndex] = distance;
+            pixelIndex += SCREEN_WIDTH;
+        }
+    }
+
+    function drawSkySpan(column, rowStart, rowEnd, skyColumn) {
+        const skyPixels = textures.sky.pixels;
+        let pixelIndex = rowStart * SCREEN_WIDTH + column;
+        for (let row = rowStart; row < rowEnd; row++) {
+            framePixels[pixelIndex] = shadedColors[skyPixels[Math.min(SKY_HEIGHT - 1, row + SKY_ROW_OFFSET) * SKY_WIDTH + skyColumn]];
+            depthBuffer[pixelIndex] = Infinity;
+            pixelIndex += SCREEN_WIDTH;
+        }
+    }
+
+    // Draws the walls, floors, and ceilings. Each screen column casts one ray and walks the lines that the ray crosses, nearest first.
+    function renderWorld(forwardX, forwardY) {
+        const rightX = forwardY;
+        const rightY = -forwardX;
+        for (let column = 0; column < SCREEN_WIDTH; column++) {
+            const offset = (column + 0.5 - HALF_SCREEN_WIDTH) / PROJECTION_DISTANCE;
+            const rayX = forwardX + rightX * offset;
+            const rayY = forwardY + rightY * offset;
+            const skyColumn = Math.floor((player.angle - Math.atan(offset)) * SKY_COLUMNS_PER_RADIAN) & (SKY_WIDTH - 1);
+            collectHits(viewX, viewY, rayX, rayY);
+            let clipTop = 0;
+            let clipBottom = VIEW_HEIGHT;
+            for (let hitIndex = 0; hitIndex < hitCount && clipTop < clipBottom; hitIndex++) {
+                const line = hitLines[hitIndex];
+                const onFront = hitOnFront[hitIndex] === 1;
+                const near = onFront ? line.front : line.back;
+                const far = onFront ? line.back : line.front;
+                if (near === null) { continue; }
+                const depth = hitParams[hitIndex];
+                const scale = PROJECTION_DISTANCE / depth;
+                const flatMap = startMapFor(near.light, 0);
+                const ceilingEnd = boundaryRow(VIEW_CENTER_ROW - (near.ceil - viewZ) * scale, clipTop, clipBottom);
+                if (near.ceilFlat === null) {
+                    drawSkySpan(column, clipTop, ceilingEnd, skyColumn);
+                } else {
+                    drawFlatSpan(column, clipTop, ceilingEnd, near.ceilFlat, near.ceil, flatMap, rayX, rayY);
+                }
+                const floorStart = boundaryRow(VIEW_CENTER_ROW - (near.floor - viewZ) * scale, ceilingEnd, clipBottom);
+                drawFlatSpan(column, floorStart, clipBottom, near.floorFlat, near.floor, flatMap, rayX, rayY);
+                clipTop = ceilingEnd;
+                clipBottom = floorStart;
+                const wallMap = startMapFor(near.light, line.contrast);
+                const textureU = line.textureOffset + (onFront ? 1 - hitLineParams[hitIndex] : hitLineParams[hitIndex]) * line.length;
+                if (far === null) {
+                    const anchorZ = line.pegBottom ? near.floor + line.middle.height : near.ceil;
+                    drawWallSpan(column, clipTop, clipBottom, line.middle, textureU, anchorZ, depth, wallMap);
+                    break;
+                }
+                if (far.ceil < near.ceil) {
+                    const upperEnd = boundaryRow(VIEW_CENTER_ROW - (far.ceil - viewZ) * scale, clipTop, clipBottom);
+                    drawWallSpan(column, clipTop, upperEnd, far.side, textureU, far.ceil + far.side.height, depth, wallMap);
+                    clipTop = upperEnd;
+                }
+                if (far.floor > near.floor) {
+                    const lowerStart = boundaryRow(VIEW_CENTER_ROW - (far.floor - viewZ) * scale, clipTop, clipBottom);
+                    drawWallSpan(column, lowerStart, clipBottom, far.side, textureU, far.floor, depth, wallMap);
+                    clipBottom = lowerStart;
+                }
+            }
+        }
+    }
+
+    function renderThings(forwardX, forwardY) {
+        const rightX = forwardY;
+        const rightY = -forwardX;
+        const visible = [];
+        for (const thing of things) {
+            const depth = (thing.x - viewX) * forwardX + (thing.y - viewY) * forwardY;
+            if (depth >= MIN_SPRITE_DEPTH) { visible.push({ thing: thing, depth: depth }); }
+        }
+        visible.sort((first, second) => second.depth - first.depth);
+        for (const entry of visible) {
+            const thing = entry.thing;
+            const depth = entry.depth;
+            const sprite = thing.sprite;
+            const scale = PROJECTION_DISTANCE / depth;
+            const side = (thing.x - viewX) * rightX + (thing.y - viewY) * rightY;
+            const leftEdge = HALF_SCREEN_WIDTH + side * scale - sprite.width * scale / 2;
+            const topEdge = VIEW_CENTER_ROW - (thing.z - viewZ) * scale - sprite.height * scale;
+            const columnStart = Math.max(0, Math.ceil(leftEdge - 0.5));
+            const columnEnd = Math.min(SCREEN_WIDTH, Math.ceil(leftEdge + sprite.width * scale - 0.5));
+            const rowStart = Math.max(0, Math.ceil(topEdge - 0.5));
+            const rowEnd = Math.min(VIEW_HEIGHT, Math.ceil(topEdge + sprite.height * scale - 0.5));
+            const shadeOffset = (thing.fullBright ? 0 : shadeLevelFor(startMapFor(thing.sector.light, 0), depth)) * PALETTE_SIZE;
+            for (let column = columnStart; column < columnEnd; column++) {
+                const spriteColumn = Math.min(sprite.width - 1, ((column + 0.5 - leftEdge) / scale) | 0);
+                for (let row = rowStart; row < rowEnd; row++) {
+                    const spriteRow = Math.min(sprite.height - 1, ((row + 0.5 - topEdge) / scale) | 0);
+                    const texel = sprite.pixels[spriteRow * sprite.width + spriteColumn];
+                    const pixelIndex = row * SCREEN_WIDTH + column;
+                    if (texel !== TRANSPARENT_INDEX && depthBuffer[pixelIndex] >= depth) {
+                        framePixels[pixelIndex] = shadedColors[shadeOffset + texel];
+                    }
+                }
+            }
+        }
+    }
+
+    // Copies a sprite to the screen at a fixed position. Rows at or below rowLimit stay untouched.
+    function blitSprite(sprite, left, top, shadeLevel, rowLimit) {
+        const shadeOffset = shadeLevel * PALETTE_SIZE;
+        for (let spriteRow = 0; spriteRow < sprite.height; spriteRow++) {
+            const row = top + spriteRow;
+            if (row < 0 || row >= rowLimit) { continue; }
+            for (let spriteColumn = 0; spriteColumn < sprite.width; spriteColumn++) {
+                const column = left + spriteColumn;
+                const texel = sprite.pixels[spriteRow * sprite.width + spriteColumn];
+                if (texel !== TRANSPARENT_INDEX && column >= 0 && column < SCREEN_WIDTH) {
+                    framePixels[row * SCREEN_WIDTH + column] = shadedColors[shadeOffset + texel];
+                }
+            }
+        }
+    }
+
+    function glyphFor(font, character) {
+        const glyph = font.get(character);
+        if (glyph === undefined) { throw new Error('The font has no glyph for "' + character + '".'); }
+        return glyph;
+    }
+
+    function textWidth(font, text) {
+        let width = 0;
+        for (const character of text) {
+            width += glyphFor(font, character).advance;
+        }
+        return width;
+    }
+
+    function drawText(font, text, left, top) {
+        let glyphLeft = left;
+        for (const character of text) {
+            const glyph = glyphFor(font, character);
+            blitSprite(glyph, glyphLeft, top, 0, SCREEN_HEIGHT);
+            glyphLeft += glyph.advance;
+        }
+    }
+
+    function drawTextRight(font, text, right, top) {
+        drawText(font, text, right - textWidth(font, text), top);
+    }
+
+    function drawTextCentered(font, text, top) {
+        drawText(font, text, Math.round((SCREEN_WIDTH - textWidth(font, text)) / 2), top);
+    }
+
+    function drawWeapon() {
+        const WEAPON_DEAD_DROP = 4;
+        const GUN_FLASH_VISIBLE_TICS = 4;
+        const FLASH_RISE = 34;
+        const frame = weapon.step === WEAPON_READY ? 0 : PISTOL_SEQUENCE[weapon.step].frame;
+        const left = Math.round(HALF_SCREEN_WIDTH - SPRITE_CENTER + weapon.bobX);
+        const top = Math.round(VIEW_HEIGHT - SPRITE_SIZE + weapon.bobY + (player.dead ? player.deadTics * WEAPON_DEAD_DROP : 0));
+        const flashing = weapon.flashTics > 0;
+        const shadeLevel = flashing ? 0 : clamp(startMapFor(player.sector.light, 0) - MAX_LIGHT_ADJUSTMENT, 0, SHADE_LEVEL_COUNT - 1);
+        if (flashing && weapon.flashTics > GUN_FLASH_TICS - GUN_FLASH_VISIBLE_TICS) {
+            blitSprite(sprites.pistolFlash, left + SPRITE_CENTER - Math.round(sprites.pistolFlash.width / 2), top - FLASH_RISE, 0, VIEW_HEIGHT);
+        }
+        blitSprite(sprites.pistol[frame], left, top, shadeLevel, VIEW_HEIGHT);
+    }
+
+    function drawStatusBar() {
+        framePixels.set(statusBarColors, VIEW_HEIGHT * SCREEN_WIDTH);
+        const ammoText = String(player.ammo);
+        const healthText = String(player.health);
+        const armorText = String(player.armor);
+        drawTextRight(numberFont, ammoText, AMMO_RIGHT, BIG_NUMBER_TOP);
+        drawTextRight(numberFont, healthText, HEALTH_RIGHT, BIG_NUMBER_TOP);
+        drawText(numberFont, '%', HEALTH_RIGHT, BIG_NUMBER_TOP);
+        drawTextRight(numberFont, armorText, ARMOR_RIGHT, BIG_NUMBER_TOP);
+        drawText(numberFont, '%', ARMOR_RIGHT, BIG_NUMBER_TOP);
+        plotTinyTextRight(statusBarPlotter(STATUS_YELLOW), ammoText, AMMO_LIST_COUNT_RIGHT, AMMO_LIST_TOP);
+        const bloodLevel = Math.min(FACE_BLOOD_LEVELS - 1, Math.floor((MAX_HEALTH - player.health) * FACE_BLOOD_LEVELS / (MAX_HEALTH + 1)));
+        const faceSprite = player.dead ? sprites.deadFace : face.ouchTics > 0 ? sprites.ouchFaces[bloodLevel] : sprites.faces[bloodLevel][face.lookIndex];
+        blitSprite(faceSprite, FACE_LEFT, FACE_TOP, 0, SCREEN_HEIGHT);
+    }
+
+    function renderGameFrame() {
+        viewX = player.x;
+        viewY = player.y;
+        const bobOffset = player.bob / 2 * Math.sin(TWO_PI * levelTic / VIEW_BOB_PERIOD_TICS);
+        viewZ = Math.min(player.z + player.viewHeight + bobOffset, player.ceilZ - CEILING_VIEW_MARGIN);
+        const forwardX = Math.cos(player.angle);
+        const forwardY = Math.sin(player.angle);
+        renderWorld(forwardX, forwardY);
+        renderThings(forwardX, forwardY);
+        drawWeapon();
+        drawStatusBar();
+        if (message.tics > 0) { drawText(messageFont, message.text, 2, 1); }
+        if (mode === 'finished') {
+            drawTextCentered(numberFont, 'LEVEL FINISHED', 50);
+            drawTextCentered(messageFont, 'KILLS ' + killCount + '/' + monsterCount, 76);
+            drawTextCentered(messageFont, 'PRESS SPACE', 92);
+        } else if (player.dead && player.deadTics > RESTART_DELAY_TICS) {
+            drawTextCentered(messageFont, 'PRESS SPACE', 76);
+        }
+    }
+
+    function renderTitle() {
+        const TITLE_SHADE_LEVEL = 14;
+        const HELP_LINES = ['ARROWS: MOVE AND TURN', 'CTRL: FIRE', 'SPACE: OPEN DOORS AND USE SWITCHES', 'SHIFT: RUN', 'ALT+ARROWS OR , AND . : STRAFE'];
+        const wall = textures.brown;
+        for (let row = 0; row < SCREEN_HEIGHT; row++) {
+            for (let column = 0; column < SCREEN_WIDTH; column++) {
+                framePixels[row * SCREEN_WIDTH + column] =
+                    shadedColors[TITLE_SHADE_LEVEL * PALETTE_SIZE + wall.pixels[(row % wall.height) * wall.width + (column % wall.width)]];
+            }
+        }
+        drawTextCentered(numberFont, 'CLICK TO START', 40);
+        HELP_LINES.forEach((helpLine, lineIndex) => drawTextCentered(messageFont, helpLine, 86 + lineIndex * 14));
+    }
+
+    // ---------------------------------------------------------------- screen wipe
+
+    const WIPE_COLUMN_WIDTH = 2;
+    const WIPE_MAX_DELAY = 15;
+    const WIPE_FAST_STEP = 8;
+
+    function startWipe() {
+        wipeOldPixels = framePixels.slice();
+        wipeOffsets = new Int32Array(SCREEN_WIDTH / WIPE_COLUMN_WIDTH);
+        wipeOffsets[0] = -(randomByte() % (WIPE_MAX_DELAY + 1));
+        for (let stripIndex = 1; stripIndex < wipeOffsets.length; stripIndex++) {
+            wipeOffsets[stripIndex] = clamp(wipeOffsets[stripIndex - 1] + (randomByte() % 3) - 1, -WIPE_MAX_DELAY, 0);
+        }
+    }
+
+    function advanceWipe() {
+        let finished = true;
+        for (let stripIndex = 0; stripIndex < wipeOffsets.length; stripIndex++) {
+            const offset = wipeOffsets[stripIndex];
+            if (offset < 0) {
+                wipeOffsets[stripIndex] = offset + 1;
+                finished = false;
+            } else if (offset < SCREEN_HEIGHT) {
+                wipeOffsets[stripIndex] = Math.min(SCREEN_HEIGHT, offset + (offset < WIPE_FAST_STEP * 2 ? offset + 1 : WIPE_FAST_STEP));
+                finished = false;
+            }
+        }
+        if (finished) {
+            wipeOffsets = null;
+            wipeOldPixels = null;
+        }
+    }
+
+    function composeWipe() {
+        for (let column = 0; column < SCREEN_WIDTH; column++) {
+            const offset = Math.max(0, wipeOffsets[Math.floor(column / WIPE_COLUMN_WIDTH)]);
+            for (let row = SCREEN_HEIGHT - 1; row >= offset; row--) {
+                framePixels[row * SCREEN_WIDTH + column] = wipeOldPixels[(row - offset) * SCREEN_WIDTH + column];
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- main loop
+
+    function restartLevel() {
+        startWipe();
+        startLevel();
+        mode = 'play';
+    }
+
+    function runTic() {
+        if (mode === 'title') { return; }
+        const tapped = useTapped;
+        useTapped = false;
+        if (wipeOffsets !== null) {
+            advanceWipe();
+            return;
+        }
+        if (mode === 'finished') {
+            if (tapped) { restartLevel(); }
+            return;
+        }
+        levelTic++;
+        thinkPlayer(tapped);
+        thinkWeapon();
+        thinkThings();
+        thinkDoors();
+        thinkSectors();
+        if (exitTics > 0) {
+            exitTics--;
+            if (exitTics === 0) { mode = 'finished'; }
+        }
+        if (player.dead && player.deadTics > RESTART_DELAY_TICS && tapped) { restartLevel(); }
+    }
+
+    function present() {
+        screenContext.putImageData(frameImage, 0, 0);
+        if (mode === 'title' || wipeOffsets !== null) { return; }
+        const DAMAGE_TINT_STEPS = 9;
+        const BONUS_TINT_STEPS = 8;
+        if (player.damageCount > 0) {
+            const strength = Math.min(DAMAGE_TINT_STEPS - 1, (player.damageCount + 7) >> 3);
+            fillBox(screenContext, translucent(255, 0, 0, strength / DAMAGE_TINT_STEPS), 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        } else if (player.dead) {
+            fillBox(screenContext, translucent(255, 0, 0, 0.3), 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        } else if (player.bonusCount > 0) {
+            const strength = Math.min(4, (player.bonusCount + 7) >> 3);
+            fillBox(screenContext, translucent(215, 186, 69, strength / BONUS_TINT_STEPS), 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        }
+    }
+
+    let previousTimestamp = null;
+    let pendingMilliseconds = 0;
+
+    function animationFrame(timestamp) {
+        if (previousTimestamp !== null) { pendingMilliseconds += timestamp - previousTimestamp; }
+        previousTimestamp = timestamp;
+        let ticsToRun = Math.floor(pendingMilliseconds / TIC_MILLISECONDS);
+        pendingMilliseconds -= ticsToRun * TIC_MILLISECONDS;
+        if (ticsToRun > MAX_TICS_PER_FRAME) { ticsToRun = MAX_TICS_PER_FRAME; }
+        for (let ticIndex = 0; ticIndex < ticsToRun; ticIndex++) { runTic(); }
+        if (ticsToRun > 0 && mode !== 'title') {
+            renderGameFrame();
+            if (wipeOffsets !== null) { composeWipe(); }
+            present();
+        }
+        requestAnimationFrame(animationFrame);
+    }
+
+    function startGame() {
+        if (mode !== 'title') { return; }
+        startAudio();
+        restartLevel();
+    }
+
+    const GAME_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ControlLeft', 'ControlRight', 'Space',
+        'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'Comma', 'Period']);
+
+    window.addEventListener('keydown', (keyEvent) => {
+        if (!GAME_KEYS.has(keyEvent.code)) { return; }
+        keyEvent.preventDefault();
+        if (mode === 'title') {
+            startGame();
+            return;
+        }
+        if (keyEvent.code === 'Space' && !keyEvent.repeat) { useTapped = true; }
+        heldKeys.add(keyEvent.code);
+    });
+    window.addEventListener('keyup', (keyEvent) => {
+        if (GAME_KEYS.has(keyEvent.code)) { keyEvent.preventDefault(); }
+        heldKeys.delete(keyEvent.code);
+    });
+    window.addEventListener('blur', () => heldKeys.clear());
+    screenCanvas.addEventListener('click', startGame);
+
+    buildPalette();
+    textures = createTextures();
+    sprites = createSprites();
+    messageFont = createFont(1, [239, 0, 0], [127, 0, 0], [67, 0, 0]);
+    numberFont = createFont(2, [203, 0, 0], [115, 0, 0], [67, 0, 0]);
+    statusBarColors = createStatusBar();
+    renderTitle();
+    present();
+    requestAnimationFrame(animationFrame);
+    setTimeout(synthesizeSoundsInBackground, 0);
+}());
+</script>
+</body>
+</html>
