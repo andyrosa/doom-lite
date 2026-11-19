@@ -8,10 +8,24 @@
 html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 body { display: flex; align-items: center; justify-content: center; }
 canvas { width: min(100vw, 133.333vh); height: min(75vw, 100vh); image-rendering: pixelated; cursor: pointer; }
+#password-dialog { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.75); }
+#password-dialog[hidden] { display: none; }
+#password-dialog form { background: #240000; border: 3px solid #a00000; color: #fff; padding: 16px; font: bold 18px monospace; }
+#password-dialog label { display: block; margin-bottom: 8px; }
+#password-dialog input { width: 230px; margin-right: 8px; background: #000; color: #fff; border: 1px solid #777; padding: 5px; }
+#password-dialog button { background: #000; color: #d00; border: 1px solid #a00000; padding: 5px 8px; cursor: pointer; }
 </style>
 </head>
 <body>
 <canvas id="screen" width="320" height="200"></canvas>
+<div id="password-dialog" hidden>
+    <form>
+        <label for="zombieman-password">HURT ME PLENTY PASSWORD</label>
+        <input id="zombieman-password" name="password" type="password" autocomplete="off">
+        <button type="submit">UNLOCK</button>
+        <button type="button" id="cancel-password">CANCEL</button>
+    </form>
+</div>
 <script>
 (function () {
     'use strict';
@@ -1348,6 +1362,16 @@ canvas { width: min(100vw, 133.333vh); height: min(75vw, 100vh); image-rendering
         };
     }
 
+    function createPhotoZombie(image) {
+        function paintPhoto(context) {
+            const spriteWidth = SPRITE_SIZE * image.naturalWidth / image.naturalHeight;
+            const spriteLeft = (SPRITE_SIZE - spriteWidth) / 2;
+            context.drawImage(image, spriteLeft, 0, spriteWidth, SPRITE_SIZE);
+        }
+        const photo = rasterize(SPRITE_SIZE, SPRITE_SIZE, 0, paintPhoto);
+        return { walk: [photo, photo], aim: photo, fire: photo, pain: photo, die: deathSprites(paintPhoto) };
+    }
+
     // ---------------------------------------------------------------- fonts and status bar
 
     const GLYPH_COLUMNS = 5;
@@ -1653,6 +1677,8 @@ canvas { width: min(100vw, 133.333vh); height: min(75vw, 100vh); image-rendering
 
     const screenCanvas = document.getElementById('screen');
     const screenContext = screenCanvas.getContext('2d');
+    const passwordDialog = document.getElementById('password-dialog');
+    const passwordInput = document.getElementById('zombieman-password');
     const frameImage = screenContext.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
     const framePixels = new Uint32Array(frameImage.data.buffer);
     const depthBuffer = new Float32Array(SCREEN_WIDTH * VIEW_HEIGHT);
@@ -1668,6 +1694,11 @@ canvas { width: min(100vw, 133.333vh); height: min(75vw, 100vh); image-rendering
     let messageFont = null;
     let numberFont = null;
     let statusBarColors = null;
+    let defaultZombieSprites = null;
+    let photoZombieSprites = null;
+    let hurtMePlenty = false;
+    let hurtMePlentyLoading = false;
+    let titleError = '';
 
     let sectors = [];
     let lines = [];
@@ -1696,6 +1727,7 @@ canvas { width: min(100vw, 133.333vh); height: min(75vw, 100vh); image-rendering
     // demoMasks is null outside the demo. During the demo it holds one input mask for each tic.
     let demoMasks = null;
     let typedCharacters = '';
+    const ZOMBIEMAN_ENCRYPTED = { salt: 'NS7Gy2weL7JMjxNlkCQYag==', iv: 'MnWLfz+fN58fjBgz', data: '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', iterations: 250000 };
 
     // ---------------------------------------------------------------- level geometry
 
@@ -3293,7 +3325,10 @@ canvas { width: min(100vw, 133.333vh); height: min(75vw, 100vh); image-rendering
             }
         }
         drawTextCentered(numberFont, 'CLICK TO START', 40);
-        HELP_LINES.forEach((helpLine, lineIndex) => drawTextCentered(messageFont, helpLine, 86 + lineIndex * 14));
+        const option = 'H: HURT ME PLENTY: ' + (hurtMePlenty ? 'ON' : 'OFF');
+        drawTextCentered(messageFont, hurtMePlentyLoading ? 'H: HURT ME PLENTY: LOADING' : option, 62);
+        if (titleError !== '') { drawTextCentered(messageFont, titleError, 78); }
+        HELP_LINES.forEach((helpLine, lineIndex) => drawTextCentered(messageFont, helpLine, 96 + lineIndex * 14));
     }
 
     // ---------------------------------------------------------------- screen wipe
@@ -3481,15 +3516,110 @@ canvas { width: min(100vw, 133.333vh); height: min(75vw, 100vh); image-rendering
         restartLevel();
     }
 
+    function decodeBase64(value) {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index++) { bytes[index] = binary.charCodeAt(index); }
+        return bytes;
+    }
+
+    async function decryptZombiemanImage(password) {
+        if (window.crypto === undefined || window.crypto.subtle === undefined) {
+            throw new Error('Web Crypto is unavailable.');
+        }
+        const keyMaterial = await window.crypto.subtle.importKey(
+            'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+        const key = await window.crypto.subtle.deriveKey(
+            { name: 'PBKDF2', salt: decodeBase64(ZOMBIEMAN_ENCRYPTED.salt), iterations: ZOMBIEMAN_ENCRYPTED.iterations, hash: 'SHA-256' },
+            keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+        const png = await window.crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: decodeBase64(ZOMBIEMAN_ENCRYPTED.iv) },
+            key, decodeBase64(ZOMBIEMAN_ENCRYPTED.data));
+        const imageUrl = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+        try {
+            const image = new Image();
+            await new Promise((resolve, reject) => {
+                image.onload = resolve;
+                image.onerror = () => reject(new Error('The decrypted image is invalid.'));
+                image.src = imageUrl;
+            });
+            return image;
+        } finally {
+            URL.revokeObjectURL(imageUrl);
+        }
+    }
+
+    async function toggleHurtMePlenty(password) {
+        if (mode !== 'title' || hurtMePlentyLoading) { return; }
+        titleError = '';
+        if (hurtMePlenty) {
+            hurtMePlenty = false;
+            sprites.zombie = defaultZombieSprites;
+            renderTitle();
+            present();
+            return;
+        }
+        if (photoZombieSprites !== null) {
+            hurtMePlenty = true;
+            sprites.zombie = photoZombieSprites;
+            renderTitle();
+            present();
+            return;
+        }
+        hurtMePlentyLoading = true;
+        renderTitle();
+        present();
+        try {
+            const image = await decryptZombiemanImage(password);
+            photoZombieSprites = createPhotoZombie(image);
+            hurtMePlenty = true;
+            sprites.zombie = photoZombieSprites;
+        } catch (error) {
+            titleError = error && error.name === 'OperationError' ? 'WRONG PASSWORD' : 'PHOTO ERROR';
+        } finally {
+            hurtMePlentyLoading = false;
+            renderTitle();
+            present();
+        }
+    }
+
+    function requestHurtMePlenty() {
+        if (mode !== 'title' || hurtMePlentyLoading) { return; }
+        if (hurtMePlenty) { toggleHurtMePlenty(''); return; }
+        passwordDialog.hidden = false;
+        passwordInput.value = '';
+        passwordInput.focus();
+    }
+
+    passwordDialog.querySelector('form').addEventListener('submit', (submitEvent) => {
+        submitEvent.preventDefault();
+        const password = passwordInput.value;
+        passwordDialog.hidden = true;
+        toggleHurtMePlenty(password);
+    });
+    document.getElementById('cancel-password').addEventListener('click', () => {
+        passwordDialog.hidden = true;
+        screenCanvas.focus();
+    });
+
     const GAME_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ControlLeft', 'ControlRight', 'Space',
         'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'Comma', 'Period']);
 
     window.addEventListener('keydown', (keyEvent) => {
+        if (!passwordDialog.hidden) {
+            if (keyEvent.key === 'Escape') { passwordDialog.hidden = true; screenCanvas.focus(); }
+            return;
+        }
         if (keyEvent.key.length === 1) {
             typedCharacters = (typedCharacters + keyEvent.key.toLowerCase()).slice(-DEMO_CHEAT_CODE.length);
             if (typedCharacters === DEMO_CHEAT_CODE) {
                 typedCharacters = '';
                 startDemo();
+                return;
+            }
+            if (mode === 'title' && keyEvent.key.toLowerCase() === 'h') {
+                keyEvent.preventDefault();
+                requestHurtMePlenty();
                 return;
             }
         }
@@ -3507,11 +3637,18 @@ canvas { width: min(100vw, 133.333vh); height: min(75vw, 100vh); image-rendering
         heldKeys.delete(keyEvent.code);
     });
     window.addEventListener('blur', () => heldKeys.clear());
-    screenCanvas.addEventListener('click', startGame);
+    screenCanvas.addEventListener('click', (clickEvent) => {
+        if (mode !== 'title') { return; }
+        const scale = SCREEN_HEIGHT / screenCanvas.getBoundingClientRect().height;
+        const row = (clickEvent.clientY - screenCanvas.getBoundingClientRect().top) * scale;
+        if (row >= 55 && row <= 75) { requestHurtMePlenty(); return; }
+        startGame();
+    });
 
     buildPalette();
     textures = createTextures();
     sprites = createSprites();
+    defaultZombieSprites = sprites.zombie;
     messageFont = createFont(1, [239, 0, 0], [127, 0, 0], [67, 0, 0]);
     numberFont = createFont(2, [203, 0, 0], [115, 0, 0], [67, 0, 0]);
     statusBarColors = createStatusBar();
